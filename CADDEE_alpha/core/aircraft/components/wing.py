@@ -717,7 +717,7 @@ class Wing(Component):
         csdl.check_parameter(LE_TE_interpolation, "LE_TE_interpolation", values=("ellipse", None))
         csdl.check_parameter(surf_index, "surf_index", types=int)
 
-        # Check if if spar and rib locations are between 0 and 1
+        # Check if spar and rib locations are between 0 and 1
         if spar_locations is not None:
             if not np.all((spar_locations > 0) & (spar_locations < 1)):
                 raise ValueError("all spar locations must be between 0 and 1 (excluding the endpoints)")
