@@ -219,57 +219,78 @@ class Blade(Wing):
         for i in range(num_spars):
             root_tip_pts[i,0] = (1-spar_locations[i]) * root_le + spar_locations[i] * root_te
             root_tip_pts[i,1] = (1-spar_locations[i]) * r_tip_le + spar_locations[i] * r_tip_te
-        print("root tip points")
-        print(root_tip_pts[:,0])
-        #compute projection direction (perpendicular to the chordline)
-        chord_direction_root = root_le-root_te
-        chord_direction_tip = r_tip_le-r_tip_te
-        spanwise_direction = np.array([0,1,0])
-        proj_direction_root = np.cross(chord_direction_root,spanwise_direction)
-        proj_direction_tip = np.cross(chord_direction_tip,spanwise_direction)
-        print("projecting...")
-        print(root_tip_pts[:,0])
-        print(proj_direction_root)
-        ribs_top_root = top_geometry.project(root_tip_pts[:,0], direction=proj_direction_root, grid_search_density_parameter=10, plot=True)
-        ribs_bottom_root = bottom_geometry.project(root_tip_pts[:,0], direction=-proj_direction_root, grid_search_density_parameter=10, plot=True)
-        ribs_top_tip = top_geometry.project(root_tip_pts[:,1], direction=proj_direction_tip, grid_search_density_parameter=10, plot=True)
-        ribs_bottom_tip = bottom_geometry.project(root_tip_pts[:,1], direction=-proj_direction_tip, grid_search_density_parameter=10, plot=True)
 
+        # #compute projection direction (perpendicular to the chordline)
+        # chord_direction_root = root_le-root_te
+        # chord_direction_tip = r_tip_le-r_tip_te
+        spanwise_direction = np.array([0,1,0])
+        # proj_direction_root = np.cross(chord_direction_root,spanwise_direction)
+        # proj_direction_tip = np.cross(chord_direction_tip,spanwise_direction)
         
-        parametric_LE = np.vstack([np.linspace(0,1,num_spanwise),np.ones((num_spanwise))]).T
-        parametric_TE = np.vstack([np.linspace(0,1,num_spanwise),np.zeros((num_spanwise))]).T
+        # ribs_top_root = top_geometry.project(root_tip_pts[:,0], direction=proj_direction_root, grid_search_density_parameter=10,plot=False)
+        # ribs_bottom_root = bottom_geometry.project(root_tip_pts[:,0], direction=-proj_direction_root, grid_search_density_parameter=10,plot=False)
+        # ribs_top_tip = top_geometry.project(root_tip_pts[:,1], direction=proj_direction_tip, grid_search_density_parameter=10,plot=False)
+        # ribs_bottom_tip = bottom_geometry.project(root_tip_pts[:,1], direction=-proj_direction_tip, grid_search_density_parameter=10,plot=False)
+
+        u_coords=np.linspace(0,1,num_spanwise)
+        # v_coords = 
+
+        parametric_LE = np.vstack([u_coords,np.ones((num_spanwise))]).T
+        parametric_TE = np.vstack([u_coords,np.zeros((num_spanwise))]).T
 
         physical_LE = blade.geometry.evaluate([(174,parametric_LE)],plot=True,non_csdl=True)
         physical_TE = blade.geometry.evaluate([(174,parametric_TE)],plot=True,non_csdl=True)
         
+        #determine chord direction for each section
         chord_direction = physical_LE-physical_TE
-        # print(proj_direction_root)
-        # print(proj_direction_tip)
+        #determine direction perpendicular to chord direction in section plane
         proj_direction = np.cross(chord_direction,np.tile(spanwise_direction,(num_spanwise,1)))
-        # print(proj_direction)
+
 
         fwd_spar_chord_loc = (1-spar_locations[0]) * physical_LE + spar_locations[0] * physical_TE
         rear_spar_chord_loc = (1-spar_locations[1]) * physical_LE + spar_locations[1] * physical_TE
-        print("Fwd spar locations")
-        print(fwd_spar_chord_loc)
-        print("Rear spar locations")
-        print(rear_spar_chord_loc)
+        # print("Fwd spar locations")
+        # print(fwd_spar_chord_loc)
+        # print("Rear spar locations")
+        # print(rear_spar_chord_loc)
 
-        # get spar start/end points (root and tip)
-        # root_tip_pts = np.zeros((num_spars, num_spanwise, 3))
+        # get parametric coordinates for spars
+        spar_top_front = np.zeros((num_spanwise,2))
+        spar_bot_front = np.zeros((num_spanwise,2))
+        spar_top_rear = np.zeros((num_spanwise,2))
+        spar_bot_rear = np.zeros((num_spanwise,2))
+
         for i in range(num_spanwise):
-            # root_tip_pts[i,0] = (1-spar_locations[i]) * root_le + spar_locations[i] * root_te
-            # root_tip_pts[i,1] = (1-spar_locations[i]) * r_tip_le + spar_locations[i] * r_tip_te
-            #project up and down to get all points
-            print("projecting...")
-            print(fwd_spar_chord_loc[i,:])
-            print(proj_direction[i,:])
-            ribs_top_root = top_geometry.project(fwd_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10, plot=True)
-            # ribs_bottom_root = bottom_geometry.project(root_tip_pts[:,0], direction=-proj_direction_root, grid_search_density_parameter=10, plot=True)
-            # ribs_top_tip = top_geometry.project(root_tip_pts[:,1], direction=proj_direction_tip, grid_search_density_parameter=10, plot=True)
-            # ribs_bottom_tip = bottom_geometry.project(root_tip_pts[:,1], direction=-proj_direction_tip, grid_search_density_parameter=10, plot=True)
+            [(_,spar_top_front[i,:])] = top_geometry.project(fwd_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10)
+            [(_,spar_top_rear[i,:])] = top_geometry.project(rear_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10)
+            [(_,spar_bot_rear[i,:])] = bottom_geometry.project(rear_spar_chord_loc[i,:], direction=-proj_direction[i,:], grid_search_density_parameter=10)
+            [(_,spar_bot_front[i,:])] = bottom_geometry.project(fwd_spar_chord_loc[i,:], direction=-proj_direction[i,:], grid_search_density_parameter=10)
+
+        # spars_physical=geometry.evaluate([(174,spar_top_front),
+        #                                     (174,spar_bot_front),
+        #                                     (175,spar_top_rear),
+        #                                     (175,spar_bot_rear)],plot=True)
+        spar_top_front_physical=geometry.evaluate([(174,spar_top_front)],plot=True)
+        spar_top_rear_physical=geometry.evaluate([(174,spar_top_rear)],plot=True)
+        spar_bot_front_physical=geometry.evaluate([(175,spar_bot_front)],plot=True)
+        spar_bot_rear_physical=geometry.evaluate([(175,spar_bot_rear)],plot=True)
+        # ribs_top_front_physical=geometry.evaluate([(174,ribs_bot_front)],plot=True)
+        # ribs_top_front_physical=geometry.evaluate([(174,ribs_bot_front)],plot=True)
+        
 
         #create spar surfaces
+        parametric_points = [(174,spar_top_front)] + [(175,spar_bot_front)]
+        fitting_coords = np.array([[u, 0] for u in u_coords] + [[u, 1] for u in u_coords])
+        fitting_values = self.geometry.evaluate(parametric_points)
+        coefficients = spar_function_space.fit(fitting_values, fitting_coords)
+        function = lfs.Function(spar_function_space, coefficients)
+        
+        
+        # spar, right_spar = self._fit_surface(parametric_points, fitting_coords, spar_function_space, False, True)
+        # self._add_geometry(surf_index, spar, "Blade_spar_", 0)
+        
+        
+        
         # for i in num_spars:
         #     parametric_points = ribs_top_array[:,i*num_rib_pts].tolist() + ribs_bottom_array[:,i*num_rib_pts].tolist()
         #     u_coords = np.linspace(0, 1, num_ribs)
