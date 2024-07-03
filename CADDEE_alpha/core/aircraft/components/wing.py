@@ -80,6 +80,7 @@ class Wing(Component):
         thickness_to_chord_loc: float = 0.3,
         geometry : Union[lfs.FunctionSet, None]=None,
         tight_fit_ffd: bool = False,
+        skip_ffd: bool = False,
         orientation: str = "horizontal",
         **kwargs
     ) -> None:
@@ -115,6 +116,7 @@ class Wing(Component):
         self._name = f"wing_{self._instance_count}"
         self._tight_fit_ffd = tight_fit_ffd
         self._orientation = orientation
+        self.skip_ffd = skip_ffd
         
         # Assign parameters
         self.parameters : WingParameters =  WingParameters(
@@ -137,6 +139,7 @@ class Wing(Component):
         if AR is not None and S_ref is not None:
             lam = taper_ratio
             span = (AR * S_ref)**0.5
+            self.parameters.span = span
             root_chord = 2 * S_ref/((1 + lam) * span)
             MAC = (2/3) * (1 + lam + lam**2) / (1 + lam) * root_chord
             self.quantities.drag_parameters.characteristic_length = MAC
@@ -284,7 +287,6 @@ class Wing(Component):
         #             for discretization_name_mesh, discretization_mesh in mesh.discretizations.items():
         #                 if discretization_mesh.identifier == discretization.identifier:
         #                     mesh.discretizations[discretization_name_mesh] = discretization
-
 
     def _make_ffd_block(self, 
             entities : List[lfs.Function], 
@@ -450,13 +452,17 @@ class Wing(Component):
             function.coefficients = function.coefficients + csdl.expand(rigid_body_translation, shape, action='j->ij')
 
         # Add the coefficients of all B-splines to the parameterization solver
-        parameterization_solver.add_parameter(chord_stretch_b_spline.coefficients)
-        parameterization_solver.add_parameter(span_stretch_b_spline.coefficients)
-        if self.parameters.sweep is not None:
-            parameterization_solver.add_parameter(sweep_translation_b_spline.coefficients)
-        if self.parameters.dihedral is not None:
-            parameterization_solver.add_parameter(dihedral_translation_b_spline.coefficients)
-        parameterization_solver.add_parameter(rigid_body_translation, cost=10)
+        if self.skip_ffd:
+            parameterization_solver.add_parameter(rigid_body_translation, cost=10)
+        
+        else:            
+            parameterization_solver.add_parameter(chord_stretch_b_spline.coefficients)
+            parameterization_solver.add_parameter(span_stretch_b_spline.coefficients)
+            if self.parameters.sweep is not None:
+                parameterization_solver.add_parameter(sweep_translation_b_spline.coefficients)
+            if self.parameters.dihedral is not None:
+                parameterization_solver.add_parameter(dihedral_translation_b_spline.coefficients)
+            parameterization_solver.add_parameter(rigid_body_translation, cost=10)
 
         return 
 
@@ -648,11 +654,13 @@ class Wing(Component):
         # Set up the ffd block
         self._setup_ffd_block(wing_ffd_block, parameterization_solver, plot=plot)
 
-        # Get wing geometric quantities (as csdl variable)
-        wing_geom_qts = self._extract_geometric_quantities_from_ffd_block()
+        if self.skip_ffd is False:
+            print("DO WING FFD")
+            # Get wing geometric quantities (as csdl variable)
+            wing_geom_qts = self._extract_geometric_quantities_from_ffd_block()
 
-        # Define the geometric constraints
-        self._setup_ffd_parameterization(wing_geom_qts, ffd_geometric_variables)
+            # Define the geometric constraints
+            self._setup_ffd_parameterization(wing_geom_qts, ffd_geometric_variables)
         
         return 
         
@@ -674,6 +682,7 @@ class Wing(Component):
             full_length_ribs:bool=False,
             finite_te:bool=True,
             export_wing_box:bool=False,
+            export_half_wing:bool=False,
             spanwise_multiplicity:int=1,
             exclute_te:bool=False,
         ):
@@ -968,7 +977,7 @@ class Wing(Component):
                 for j in range(chord_n-1):
                     top_parametric_points = ribs_top_array[i,j*num_rib_pts:(j+1)*num_rib_pts+1].tolist()
                     bottom_parametric_points = ribs_bottom_array[i,j*num_rib_pts:(j+1)*num_rib_pts+1].tolist()
-                    surfs = self._fit_surface(top_parametric_points+bottom_parametric_points, fitting_coords, rib_panel_function_space, i>0, False)
+                    surfs = self._fit_surface(top_parametric_points+bottom_parametric_points, fitting_coords, rib_panel_function_space, i>0 and not export_half_wing, False)
                     wing_box_surf_index = self._add_geometry(wing_box_surf_index, surfs, "Wing_rib_panel_", i, wing_box_geometry)
 
                 if i > 0:
@@ -990,9 +999,9 @@ class Wing(Component):
                         #                          ribs_top_array[i,j*num_rib_pts:(j+1)*num_rib_pts+1].tolist())
                         # bottom_parametric_points = (ribs_bottom_array[i-1,j*num_rib_pts:(j+1)*num_rib_pts+1].tolist() +
                         #                             ribs_bottom_array[i,j*num_rib_pts:(j+1)*num_rib_pts+1].tolist())
-                        top_surfs = self._fit_surface(top_parametric_points, fitting_coords, panel_function_space, True, False)
+                        top_surfs = self._fit_surface(top_parametric_points, fitting_coords, panel_function_space, not export_half_wing, False)
                         wing_box_surf_index = self._add_geometry(wing_box_surf_index, top_surfs, "Wing_top_panel_", i, wing_box_geometry)
-                        bottom_surfs = self._fit_surface(bottom_parametric_points, fitting_coords, panel_function_space, True, False)
+                        bottom_surfs = self._fit_surface(bottom_parametric_points, fitting_coords, panel_function_space, not export_half_wing, False)
                         wing_box_surf_index = self._add_geometry(wing_box_surf_index, bottom_surfs, "Wing_bottom_panel_", i, wing_box_geometry)
 
                     # create spar segments
@@ -1022,7 +1031,7 @@ class Wing(Component):
                         # bottom_parametric_points = [ribs_bottom_array[i-2,j*num_rib_pts], ribs_bottom_array[i-1,j*num_rib_pts], ribs_bottom_array[i,j*num_rib_pts]]
                         # fitting_coords = np.array([[0., 0.], [0.5, 0], [1., 0.], [0., 1.], [0.5, 1.], [1., 1.]])
                         fitting_coords = np.array(top_fitting_coords + bottom_fitting_coords)
-                        surfs = self._fit_surface(top_parametric_points+bottom_parametric_points, fitting_coords, spar_segment_function_space, True, False)
+                        surfs = self._fit_surface(top_parametric_points+bottom_parametric_points, fitting_coords, spar_segment_function_space, not export_half_wing, False)
                         wing_box_surf_index = self._add_geometry(wing_box_surf_index, surfs, "Wing_spar_segment_", i, wing_box_geometry)
 
         if export_wing_box:
