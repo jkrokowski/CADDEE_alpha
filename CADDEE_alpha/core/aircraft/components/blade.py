@@ -229,16 +229,8 @@ class Blade(Wing):
         # chord_direction_root = root_le-root_te
         # chord_direction_tip = r_tip_le-r_tip_te
         spanwise_direction = np.array([0,1,0])
-        # proj_direction_root = np.cross(chord_direction_root,spanwise_direction)
-        # proj_direction_tip = np.cross(chord_direction_tip,spanwise_direction)
-        
-        # ribs_top_root = top_geometry.project(root_tip_pts[:,0], direction=proj_direction_root, grid_search_density_parameter=10,plot=False)
-        # ribs_bottom_root = bottom_geometry.project(root_tip_pts[:,0], direction=-proj_direction_root, grid_search_density_parameter=10,plot=False)
-        # ribs_top_tip = top_geometry.project(root_tip_pts[:,1], direction=proj_direction_tip, grid_search_density_parameter=10,plot=False)
-        # ribs_bottom_tip = bottom_geometry.project(root_tip_pts[:,1], direction=-proj_direction_tip, grid_search_density_parameter=10,plot=False)
 
         u_coords=np.linspace(0,1,num_spanwise)
-        # v_coords = 
 
         parametric_LE = np.vstack([u_coords,np.ones((num_spanwise))]).T
         parametric_TE = np.vstack([u_coords,np.zeros((num_spanwise))]).T
@@ -251,53 +243,20 @@ class Blade(Wing):
         #determine direction perpendicular to chord direction in section plane
         proj_direction = np.cross(chord_direction,np.tile(spanwise_direction,(num_spanwise,1)))
 
-
         fwd_spar_chord_loc = (1-spar_locations[0]) * physical_LE + spar_locations[0] * physical_TE
         rear_spar_chord_loc = (1-spar_locations[1]) * physical_LE + spar_locations[1] * physical_TE
-        # print("Fwd spar locations")
-        # print(fwd_spar_chord_loc)
-        # print("Rear spar locations")
-        # print(rear_spar_chord_loc)
 
-        # get parametric coordinates for spars
-        # spar_top_front = np.zeros((num_spanwise,2))
-        # spar_bot_front = np.zeros((num_spanwise,2))
-        # spar_top_rear = np.zeros((num_spanwise,2))
-        # spar_bot_rear = np.zeros((num_spanwise,2))
-        
+        # get parametric coordinates for spars       
         spar_top_front = np.empty((num_spanwise),dtype='O,O')
         spar_bot_front = np.empty((num_spanwise),dtype='O,O')
         spar_top_rear = np.empty((num_spanwise),dtype='O,O')
         spar_bot_rear = np.empty((num_spanwise),dtype='O,O')
         for i in range(num_spanwise):
-            # [(_,spar_top_front[i,:])] = top_geometry.project(fwd_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10)
-            # [(_,spar_top_rear[i,:])] = top_geometry.project(rear_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10)
-            # [(_,spar_bot_rear[i,:])] = bottom_geometry.project(rear_spar_chord_loc[i,:], direction=-proj_direction[i,:], grid_search_density_parameter=10)
-            # [(_,spar_bot_front[i,:])] = bottom_geometry.project(fwd_spar_chord_loc[i,:], direction=-proj_direction[i,:], grid_search_density_parameter=10)
-            
+
             spar_top_front[i] = top_geometry.project(fwd_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10)[0]
-            # print('spar_top_front')
-            # print(spar_top_front[i])
             spar_top_rear[i] = top_geometry.project(rear_spar_chord_loc[i,:], direction=proj_direction[i,:], grid_search_density_parameter=10)[0]
             spar_bot_rear [i]= bottom_geometry.project(rear_spar_chord_loc[i,:], direction=-proj_direction[i,:], grid_search_density_parameter=10)[0]
             spar_bot_front[i] = bottom_geometry.project(fwd_spar_chord_loc[i,:], direction=-proj_direction[i,:], grid_search_density_parameter=10)[0]
-        
-        # spars_physical=geometry.evaluate([(174,spar_top_front),
-        #                                     (174,spar_bot_front),
-        #                                     (175,spar_top_rear),
-        #                                     (175,spar_bot_rear)],plot=True)
-
-        # spar_top_front_physical=geometry.evaluate(spar_top_front,plot=True)
-        # spar_top_rear_physical=geometry.evaluate(spar_top_rear,plot=True)
-        # spar_bot_front_physical=geometry.evaluate(spar_bot_front,plot=True)
-        # spar_bot_rear_physical=geometry.evaluate(spar_bot_rear,plot=True)
-        
-        # ribs_top_front_physical=geometry.evaluate([(174,ribs_bot_front)],plot=True)
-        # ribs_top_front_physical=geometry.evaluate([(174,ribs_bot_front)],plot=True)
-        
-        # print(spar_top_front)
-        # print(type(spar_top_front))
-        # print(spar_top_rear)
 
         #create spar surfaces
 
@@ -410,17 +369,13 @@ class Blade(Wing):
             
             xs.append(pts)
 
-        for pts in xs:
-            print(pts[0].value)
-            print("---------")
-
         from OCC.Core.gp import gp_Pnt2d
         from OCC.Core.TColgp import TColgp_Array1OfPnt2d
         from OCC.Core.Geom2dAPI import Geom2dAPI_PointsToBSpline
         from OCC.Core.Geom2d import Geom2d_OffsetCurve
         from OCC.Display.SimpleGui import init_display
         from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire,BRepBuilderAPI_MakeFace
-        from OCC.Extend.ShapeFactory import make_wire, make_edge2d
+        from OCC.Extend.ShapeFactory import make_wire, make_edge2d,make_edge
         from OCC.Core.BRepOffsetAPI import BRepOffsetAPI_MakeOffset
         # from OCC.Core.GeomAbs import GeomAbs_JoinType
         from OCC.Core.GeomAbs import GeomAbs_Arc
@@ -428,7 +383,7 @@ class Blade(Wing):
 
         display, start_display, add_menu, add_function_to_menu = init_display()
         pt_num = 1
-        for i in [1]:
+        for i in [0]:
             top_pts = xs[i][0].value
             bot_pts = xs[i][1].value
 
@@ -449,8 +404,7 @@ class Blade(Wing):
             top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), dist)
 
             bot_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
-            print(pt_num)
-            print(pt_num+num_parametric-1)
+
             for bot_pt in bot_pts:
                 bot_pt_array.SetValue(pt_num, gp_Pnt2d(bot_pt[0], bot_pt[2]))
                 pt_num+=1
@@ -469,12 +423,153 @@ class Blade(Wing):
             offset.Perform(dist)
             offset_wire = offset.Shape()
 
+            #TODO: need to figure out how to export the entire offset curve, possibly as a b-spline?
+
+            # from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
+            # from OCC.Core.TColgp import TColgp_Array1OfPnt
+            # from OCC.Core.BRep import BRep_Tool
+            # from OCC.Core.TopoDS import topods_Vertex
+            # from OCC.Core.TopAbs import TopAbs_EDGE,TopAbs_VERTEX
+            # from OCC.Core.TopExp import TopExp_Explorer
+
+            # # Function to extract points from an edge
+            # def extract_points_from_edge(edge):
+            #     points = []
+            #     vertex_iterator = TopExp_Explorer(edge, TopAbs_VERTEX)
+            #     while vertex_iterator.More():
+            #         vertex = topods_Vertex(vertex_iterator.Current())
+            #         pnt = BRep_Tool.Pnt(vertex)
+            #         points.append(pnt)
+            #         vertex_iterator.Next()
+            #     return points
+
+            # # Function to interpolate a B-Spline curve from points
+            # def interpolate_bspline_from_points(points):
+            #     num_points = len(points)
+            #     array_of_points = TColgp_Array1OfPnt(1, num_points)
+            #     for i in range(num_points):
+            #         array_of_points.SetValue(i + 1, points[i])
+                
+            #     # Interpolate a B-Spline curve through the points
+            #     interpolator = GeomAPI_PointsToBSpline(array_of_points)
+            #     # interpolator.Perform()
+            #     if interpolator.IsDone():
+            #         bspline_curve = interpolator.Curve()
+            #         return bspline_curve
+            #     else:
+            #         raise RuntimeError("Failed to create B-Spline curve from points")
+
+            # # Extract points from the offset wire
+            # offset_points = []
+            # explorer = TopExp_Explorer(offset_wire, TopAbs_EDGE)
+            # while explorer.More():
+            #     edge = explorer.Current()
+            #     edge_points = extract_points_from_edge(edge)
+            #     offset_points.extend(edge_points)
+            #     explorer.Next()
+
+            # # Interpolate a B-Spline curve from the extracted points
+            # bspline_curve = interpolate_bspline_from_points(offset_points)
+            # bspline_wire = make_wire([make_edge(bspline_curve)])
+
+            # display.DisplayShape(bspline_wire,color="PINK")
+
+
+
+
+
+
+            # from OCC.Core.GeomConvert import geomconvert_CurveToBSplineCurve
+            # from OCC.Core.Geom import Geom_Curve
+            # from OCC.Core.TopExp import TopExp_Explorer
+            # from OCC.Core.TopAbs import TopAbs_EDGE
+            # from OCC.Core.BRep import BRep_Tool
+
+            # # Function to convert edge to B-Spline curve
+            # def edge_to_bspline(edge):
+            #     curve_handle, first, last = BRep_Tool.Curve(edge)
+            #     if not curve_handle is None:
+            #         bspline_curve = geomconvert_CurveToBSplineCurve(curve_handle)
+            #         return bspline_curve
+            #     return None
+
+            # # Extract edges from the offset shape and convert to B-Spline curves
+            # bspline_curves = []
+            # explorer = TopExp_Explorer(offset_wire, TopAbs_EDGE)
+            # while explorer.More():
+            #     edge = explorer.Current()
+            #     bspline_curve = edge_to_bspline(edge)
+            #     if bspline_curve is not None:
+            #         bspline_curves.append(bspline_curve)
+            #     explorer.Next()
+            
+            # from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeWire
+
+            # # Combine B-Spline curves into a single wire
+            # wire_builder = BRepBuilderAPI_MakeWire()
+            # for bspline_curve in bspline_curves:
+            #     edge = BRepBuilderAPI_MakeEdge(bspline_curve).Edge()
+            #     wire_builder.Add(edge)
+
+            # combined_wire = wire_builder.Wire()
+
+            # from OCC.Core.BRepAdaptor import BRepAdaptor_CompCurve
+            # from OCC.Core.GCPnts import GCPnts_UniformAbscissa
+
+            # wire_adaptor = BRepAdaptor_CompCurve(wire)
+            # discretizer = GCPnts_UniformAbscissa(wire_adaptor, 0.1)  # 0.1 is the step size
+
+            # points = []
+            # for i in range(1, discretizer.NbPoints() + 1):
+            #     param = discretizer.Parameter(i)
+            #     point = wire_adaptor.Value(param)
+            #     points.append(point)
+
+            # from OCC.Core.TColgp import TColgp_Array1OfPnt
+
+            # array_of_points = TColgp_Array1OfPnt(1, len(points))
+            # for i, point in enumerate(points, 1):
+            #     array_of_points.SetValue(i, point)
+
+            # from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
+
+            # degree_min = 3
+            # degree_max = 3
+            # continuity = 2
+            # tolerance = 1e-5
+
+            # bspline_builder = GeomAPI_PointsToBSpline(array_of_points, degree_min, degree_max, continuity, tolerance)
+            # bspline_curve = bspline_builder.Curve()
+
+
+
+
+
+
+
+
+
             display.DisplayShape(top_spline.Curve())
             display.DisplayShape(bot_spline.Curve(),color="YELLOW")
             # display.DisplayShape(top_spline_offset, color="BLUE")
             # display.DisplayShape(bot_spline_offset, color="GREEN")
             display.DisplayShape(offset_wire,color="BLACK")
+            # display.DisplayShape(bspline_curve,color='RED')
+            # combined_wire = wire_builder.Wire()
 
+            # from OCC.Core.TopExp import TopExp_Explorer
+            # from OCC.Core.TopAbs import TopAbs_EDGE
+
+            # # Count the number of edges in the offset wire
+            # offset_edges = []
+            # explorer = TopExp_Explorer(offset_wire, TopAbs_EDGE)
+            # while explorer.More():
+            #     offset_edges.append(explorer.Current())
+            #     explorer.Next()
+
+            # print(f"Number of edges in the offset wire: {len(offset_edges)}")
+            # print(offset_edges)
+            
             if front_spar_geometry is not None and rear_spar_geometry is not None:
                 front_spar_pts = xs[i][2].value
                 rear_spar_pts = xs[i][3].value
@@ -509,7 +604,50 @@ class Blade(Wing):
             start_display()
 
 
+            from OCC.Core.BRep import BRep_Builder
+            from OCC.Core.TopoDS import TopoDS_Compound
+            from OCC.Core.STEPControl import STEPControl_Writer, STEPControl_AsIs
+            from OCC.Core.TopExp import TopExp_Explorer
+            from OCC.Core.TopAbs import TopAbs_EDGE
+            # Create a compound to hold multiple wires
+            compound = TopoDS_Compound()
+            builder = BRep_Builder()
+            builder.MakeCompound(compound)
+
+            # Add wires to the compound
+            builder.Add(compound, wire)
+            builder.Add(compound, offset_wire)
+            # builder.Add(compound, combined_wire)
+            # builder.Add(compound, bspline_wire)
+            
+            # # Add the offset shape to the compound
+            # explorer = TopExp_Explorer(offset_wire, TopAbs_EDGE)
+            # while explorer.More():
+            #     builder.Add(compound, explorer.Current())
+            #     explorer.Next()
+
+            # Initialize the STEP writer
+            step_writer = STEPControl_Writer()
+
+            # Add the wire to the STEP writer
+            step_writer.Transfer(compound, STEPControl_AsIs)
+
+            # Write the file
+            step_writer.Write("output.stp")
+
         gmsh.initialize()
+
+        # gmsh.open("output.stp")
+        gmsh.model.occ.import_shapes("output.stp")
+        # CL1 = gmsh.model.occ.add_curve_loop([1,2])
+        # gmsh.model.occ.add_plane_surface([CL1])
+        gmsh.model.occ.synchronize()
+        print(gmsh.model.get_entities(1))
+        gmsh.option.setNumber("Mesh.MeshSizeMin", .01)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", .01)
+        gmsh.model.mesh.generate(2)
+        gmsh.fltk.run()
+
         for i,pts in enumerate(xs):
             top_pts = pts[0]
             bot_pts = pts[1]
