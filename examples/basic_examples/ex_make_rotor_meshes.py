@@ -118,7 +118,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         airframe.comps[f"rotor_{i+1}"] = rotor
     lift_rotor_1 = airframe.comps['rotor_1']
     # lift_rotor_1.plot()
-
+    
     lift_rotor_1_blade_geometry = lift_rotor_1.create_subgeometry(search_names="Rotor_1_blades, 0")
     lift_rotor_1_blade_geometry.plot()
 
