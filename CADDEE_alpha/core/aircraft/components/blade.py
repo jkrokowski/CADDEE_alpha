@@ -300,7 +300,7 @@ class Blade(Wing):
         if rear_spar_geometry is not None:
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
-        num_parametric = 25
+        num_parametric = 50
 
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric)
@@ -371,8 +371,8 @@ class Blade(Wing):
 
         from OCC.Core.gp import gp_Pnt2d
         from OCC.Core.TColgp import TColgp_Array1OfPnt2d
-        from OCC.Core.Geom2dAPI import Geom2dAPI_PointsToBSpline
-        from OCC.Core.Geom2d import Geom2d_OffsetCurve
+        from OCC.Core.Geom2dAPI import Geom2dAPI_PointsToBSpline,Geom2dAPI_InterCurveCurve
+        from OCC.Core.Geom2d import Geom2d_OffsetCurve,Geom2d_TrimmedCurve
         from OCC.Display.SimpleGui import init_display
         from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire,BRepBuilderAPI_MakeFace
         from OCC.Extend.ShapeFactory import make_wire, make_edge2d,make_edge
@@ -387,7 +387,7 @@ class Blade(Wing):
 
         #TODO: Need to add some checks here for a successful offset operation and determine whether
         #   there are multiple bspline curves (e.g. a check for ISCLOSED)
-        for i in [0]:
+        for i in [8]:
             top_pts = xs[i][0].value
             bot_pts = xs[i][1].value
 
@@ -402,10 +402,14 @@ class Blade(Wing):
             # top_spline_edge = BRepBuilderAPI_MakeEdge(top_spline).Edge()
             # top_spline_wire = BRepBuilderAPI_MakeWire(top_spline_edge).Wire()
             # display.DisplayShape(top_spline_wire)
-            offset_distance = 0.00005
+            offset_distance = 0.0005
+            offset_upper = 0.0005
+            offset_lower = 0.0005
+            offset_spar = 0.005
+            offset_spar_cap = 0.006
             offset_tol = 1e-10
 
-            top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), -offset_distance)
+            top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), offset_upper)
 
             bot_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
 
@@ -415,9 +419,9 @@ class Blade(Wing):
             # bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array).Curve()
             bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array, bspline_order, bspline_order) 
 
-            wire = make_wire([make_edge2d(top_spline.Curve()), make_edge2d(bot_spline.Curve())])
-            bot_spline_offset = Geom2d_OffsetCurve(bot_spline.Curve(), -offset_distance)
+            bot_spline_offset = Geom2d_OffsetCurve(bot_spline.Curve(), offset_lower)
             
+            wire = make_wire([make_edge2d(top_spline.Curve()), make_edge2d(bot_spline.Curve())])
             # offset_wire = BRepOffsetAPI_MakeOffset(wire,dist,GeomAbs_JoinType.GeomAbs_Intersection, False)
             # offset = BRepOffsetAPI_MakeOffset()
             # offset.Init(GeomAbs_Arc)
@@ -425,104 +429,116 @@ class Blade(Wing):
             # offset.Perform(dist)
             # offset_wire = offset.Shape()
 
-            offset_builder = BRepOffsetAPI_MakeOffset(wire, BRepOffset_Skin)
-            offset_builder.Perform(-offset_distance,offset_tol)
-            # offset_builder.SetJoinType(1)
-            # Set the offset parameters
-            # offset_builder.SetOffset(offset_distance)
-            # offset_builder.SetTolerance(offset_tol)
-            # offset_builder.CheckIntersection(True)
-            # offset_builder.Perform()
-            # Extract the resulting offset wire
-            offset_wire = offset_builder.Shape()        
-
-            from OCC.Core.BRep import BRep_Tool
-            from OCC.Core.TopExp import TopExp_Explorer
-            from OCC.Core.TopAbs import TopAbs_EDGE
-            from OCC.Core.TopoDS import topods_Edge, TopoDS_Edge,topods
-            from OCC.Core.TColgp import TColgp_Array1OfPnt,TColgp_HArray1OfPnt
-            from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
-            from OCC.Display.SimpleGui import init_display
-            from OCC.Core.GeomAPI import GeomAPI_Interpolate
-
-            # Function to extract points from an edge
-            def extract_points_from_edge(edge, num_samples=100):
-                curve_handle, first, last = BRep_Tool.Curve(edge)
-                if curve_handle is None:
-                    return []
-                
-                points = []
-                step = (last - first) / num_samples
-                for i in range(num_samples + 1):
-                    pnt = curve_handle.Value(first + i * step)
-                    points.append(pnt)
-                return points
-
-            # Function to convert wire to a list of points
-            def wire_to_points(wire, num_samples=100):
-                points = []
-                explorer = TopExp_Explorer(wire, TopAbs_EDGE)
-                num_edges = 0
-                while explorer.More():
-                    edge = topods.Edge(explorer.Current())
-                    edge_points = extract_points_from_edge(edge, num_samples)
-                    points.extend(edge_points)
-                    explorer.Next()
-                    num_edges+=1
-                print('num_edges:')
-                print(num_edges)
-                return points
-
-            # Extract points from the offset wire
-            points = wire_to_points(offset_wire,50)
-
-            # Create TColgp_Array1OfPnt from points
-            num_points = len(points)
-            # array_of_points = TColgp_HArray1OfPnt(1, ndum_points)
-            array_of_points = TColgp_Array1OfPnt(1, num_points)
-            for j, pnt in enumerate(points):
-                array_of_points.SetValue(j + 1, pnt)
-
-            # points_harray = TColgp_HArray1OfPnt(array_of_points)
-
-            # interpolator = GeomAPI_Interpolate(points_harray, False, 1e-6)
-            # interpolator.Perform()
-            # if interpolator.IsDone():
-            #     bspline_curve = interpolator.Curve()
-            #     # Display the B-spline curve
-            #     display.DisplayShape(bspline_curve, update=True)
-            # else:
-            #     raise RuntimeError("Interpolation failed")
-
-            # Create a B-spline curve from the points
-            # interpolator = GeomAPI_PointsToBSpline(array_of_points,3,8)
-            interpolator = GeomAPI_PointsToBSpline(array_of_points,3,3,GeomAbs_C2,1e-8)
-            if interpolator.IsDone():
-                bspline_curve = interpolator.Curve()
-
-                # Display the B-spline curve
-                display.DisplayShape(bspline_curve, update=True, color="black")
-            else:
-                raise RuntimeError("Failed to create B-spline curve from points")
+            # #BSPLINE OFFSET CONSTRUCTION HERE....
+            # from OCC.Core.BRepCheck import BRepCheck_Analyzer
+            # def check_geometry(shape):
+            #     analyzer = BRepCheck_Analyzer(shape)
+            #     return analyzer.IsValid()
             
-            # # Create a B-spline curve from the points using GeomAPI_Interpolate
-            # interpolator = GeomAPI_Interpolate(array_of_points, False, 1e-3)
-            # interpolator.Perform()
+            # print("OML:")
+            # print(wire.Closed())
+
+            # offset_builder = BRepOffsetAPI_MakeOffset(wire, BRepOffset_Skin)
+            # offset_builder.Perform(-offset_distance,offset_tol)
+
+            # #check offsetbuilder finished successfully
+            # print('offset success?:')
+            # print(offset_builder.IsDone())
+
+            # print('OML wire validity:')
+            # print(check_geometry(wire))
+
+            # offset_wire = offset_builder.Shape()
+            
+            # print('offset closed?:')
+            # print(offset_wire.Closed() )     
+
+            # from OCC.Core.BRep import BRep_Tool
+            # from OCC.Core.TopExp import TopExp_Explorer
+            # from OCC.Core.TopAbs import TopAbs_EDGE
+            # from OCC.Core.TopoDS import topods
+            # from OCC.Core.TColgp import TColgp_Array1OfPnt,TColgp_HArray1OfPnt
+            # from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
+            # from OCC.Display.SimpleGui import init_display
+            # from OCC.Core.GeomAPI import GeomAPI_Interpolate
+
+            # # Function to extract points from an edge
+            # def extract_points_from_edge(edge, num_samples=100):
+            #     curve_handle, first, last = BRep_Tool.Curve(edge)
+            #     if curve_handle is None:
+            #         return []
+                
+            #     points = []
+            #     step = (last - first) / num_samples
+            #     for i in range(num_samples + 1):
+            #         pnt = curve_handle.Value(first + i * step)
+            #         points.append(pnt)
+            #     return points
+
+            # # Function to convert wire to a list of points
+            # def wire_to_points(wire, num_samples=100):
+            #     points = []
+            #     explorer = TopExp_Explorer(wire, TopAbs_EDGE)
+            #     num_edges = 0
+            #     while explorer.More():
+            #         edge = topods.Edge(explorer.Current())
+            #         edge_points = extract_points_from_edge(edge, num_samples)
+            #         points.extend(edge_points)
+            #         explorer.Next()
+            #         num_edges+=1
+            #     print('num_edges:')
+            #     print(num_edges)
+            #     return points
+
+            # # Extract points from the offset wire
+            # points = wire_to_points(offset_wire,100)
+
+            # # Create TColgp_Array1OfPnt from points
+            # num_points = len(points)
+            # # array_of_points = TColgp_HArray1OfPnt(1, ndum_points)
+            # array_of_points = TColgp_Array1OfPnt(1, num_points)
+            # for j, pnt in enumerate(points):
+            #     array_of_points.SetValue(j + 1, pnt)
+
+            # # Create a B-spline curve from the points
+            # # interpolator = GeomAPI_PointsToBSpline(array_of_points,3,8)
+            # interpolator = GeomAPI_PointsToBSpline(array_of_points,3,3,GeomAbs_C2,1e-6)
             # if interpolator.IsDone():
             #     bspline_curve = interpolator.Curve()
+
             #     # Display the B-spline curve
-            #     display.DisplayShape(bspline_curve, update=True)
+            #     display.DisplayShape(bspline_curve, update=True, color="black")
             # else:
             #     raise RuntimeError("Failed to create B-spline curve from points")
+            # print('bspline curve offset closed?:')
+            # print(bspline_curve.IsClosed())
 
-            bspline_wire = make_wire([make_edge(bspline_curve)])
+            # bspline_wire = make_wire([make_edge(bspline_curve)])
+            # #..... TO HERE
+            
+            intersector = Geom2dAPI_InterCurveCurve(top_spline_offset,bot_spline_offset)
+            intersections = []
+            if intersector.NbPoints() > 0:
+                for j in range(1, intersector.NbPoints() + 1):
+                    intersections.append(intersector.Point(j))
+                    # Geom2d_TrimmedCurve(top_spline_offset,)
+            print(f'number of intersections {j}')
 
-            display.DisplayShape(top_spline.Curve())
+            intersection = intersections[0]
+            param1_curve1, param2_curve1 = Geom2dAPI_InterCurveCurve.Parameters(top_spline_offset, intersection)
+            param1_curve2, param2_curve2 = Geom2dAPI_InterCurveCurve.Parameters(bot_spline_offset, intersection)
+            
+            trimmed_curve1 = Geom2d_TrimmedCurve(top_spline_offset, top_spline_offset.FirstParameter(), param1_curve1)
+            trimmed_curve2 = Geom2d_TrimmedCurve(bot_spline_offset, bot_spline_offset.FirstParameter(), param1_curve2)
+
+            display.DisplayShape(top_spline.Curve(),color='RED')
             display.DisplayShape(bot_spline.Curve(),color="YELLOW")
-            # display.DisplayShape(top_spline_offset, color="BLUE")
-            # display.DisplayShape(bot_spline_offset, color="GREEN")
-            display.DisplayShape(offset_wire,color="RED")
-            # display.DisplayShape(bspline_curve,color='RED')
+            display.DisplayShape(top_spline_offset, color="Red")
+            display.DisplayShape(bot_spline_offset, color="Yellow")
+            # display.DisplayShape(trimmed_curve1, color="Black")
+            # display.DisplayShape(trimmed_curve2, color="Black")
+            # display.DisplayShape(offset_wire,color="RED")
+            # display.DisplayShape(bspline_wire,color='RED')
         
             
             if front_spar_geometry is not None and rear_spar_geometry is not None:
@@ -536,7 +552,7 @@ class Blade(Wing):
                     pt_num +=1
                 front_spar_spline = Geom2dAPI_PointsToBSpline(front_spar_pt_array,bspline_order, bspline_order)
                 display.DisplayShape(front_spar_spline.Curve(),color="BLUE")
-                front_spar_offset=Geom2d_OffsetCurve(front_spar_spline.Curve(), -offset_distance)
+                front_spar_offset=Geom2d_OffsetCurve(front_spar_spline.Curve(), -offset_spar)
                 display.DisplayShape(front_spar_offset,color="GREEN")
 
                 #rear spar
@@ -546,7 +562,7 @@ class Blade(Wing):
                     pt_num +=1
                 rear_spar_spline = Geom2dAPI_PointsToBSpline(rear_spar_pt_array,bspline_order, bspline_order)
                 display.DisplayShape(rear_spar_spline.Curve(),color="BLUE")
-                rear_spar_offset=Geom2d_OffsetCurve(rear_spar_spline.Curve(), -offset_distance)
+                rear_spar_offset=Geom2d_OffsetCurve(rear_spar_spline.Curve(), -offset_spar)
                 display.DisplayShape(rear_spar_offset,color="GREEN")
             
             display.FitAll()
@@ -571,7 +587,7 @@ class Blade(Wing):
             # builder.Add(compound, rear_spar_offset)
             # builder.Add(compound, offset_wire)
             # builder.Add(compound, combined_wire)
-            builder.Add(compound, bspline_wire)
+            # builder.Add(compound, bspline_wire)
             
             # Initialize the STEP writer
             step_writer = STEPControl_Writer()
@@ -580,14 +596,38 @@ class Blade(Wing):
             step_writer.Transfer(compound, STEPControl_AsIs)
 
             # Write the file
-            step_writer.Write("output.stp")
+            step_writer.Write("OML.stp")
+
+            # compound1 = TopoDS_Compound()
+            # builder1 = BRep_Builder()
+            # builder1.MakeCompound(compound1)
+
+            # # Add wires to the compound
+            # builder1.Add(compound1, bspline_wire)
+            # # builder.Add(compound, rear_spar_offset)
+            # # builder1.Add(compound1, offset_wire)
+            # # builder.Add(compound, combined_wire)
+            # # builder.Add(compound, bspline_wire)
+            
+            # # Initialize the STEP writer
+            # step_writer1 = STEPControl_Writer()
+
+            # # Add the wire to the STEP writer
+            # step_writer1.Transfer(compound1, STEPControl_AsIs)
+
+            # # Write the file
+            # step_writer1.Write("OML_offset.stp")
+
 
         gmsh.initialize()
 
         # gmsh.open("output.stp")
-        gmsh.model.occ.import_shapes("output.stp")
-        CL1 = gmsh.model.occ.add_curve_loop([1,2])
-        CL2 = gmsh.model.occ.add_curve_loop([3])
+        OML = gmsh.model.occ.import_shapes("OML.stp")
+        OML_tags = [item[1] for item in OML]
+        OML_offset=gmsh.model.occ.import_shapes("OML_offset.stp")
+        OML_offset_tags = [item[1] for item in OML_offset]
+        CL1 = gmsh.model.occ.add_curve_loop(OML_tags)
+        CL2 = gmsh.model.occ.add_curve_loop(OML_offset_tags)
         gmsh.model.occ.add_plane_surface([CL1,CL2])
         gmsh.model.occ.synchronize()
         print(gmsh.model.get_entities(1))
