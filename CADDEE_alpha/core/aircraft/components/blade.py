@@ -1,5 +1,6 @@
 import lsdo_function_spaces as lfs
 from lsdo_function_spaces import FunctionSet
+import CADDEE_alpha as cd
 from CADDEE_alpha.core.component import Component
 from CADDEE_alpha.core.aircraft.components.wing import Wing, WingParameters
 from lsdo_geo.core.parameterization.volume_sectional_parameterization import (
@@ -300,19 +301,40 @@ class Blade(Wing):
         if rear_spar_geometry is not None:
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
-        num_parametric = 50
+        num_parametric = 3
 
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric)
         xs = []
         if front_spar_geometry is not None and rear_spar_geometry is not None:
             insertion_pts = np.empty((u_coords.shape[0],4),dtype=int)
-
+        skin_thickness = 0.0005
         for i,u_coord in enumerate(u_coords):
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             parametric_bot = [(bottom_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
             top_pts = self.geometry.evaluate(parametric_top, plot=False)
             bot_pts = self.geometry.evaluate(parametric_bot, plot=False)
+            top_pts_offset = self.geometry.evaluate_normals(parametric_top,plot=False)
+            thickness = csdl.Variable(value=skin_thickness, name='upper_wing_thickness')
+            # thickness.set_as_design_variable(upper=0.05, lower=0.0001, scaler=1e3)
+            function = lfs.Function(lfs.ConstantSpace(2), thickness)
+            functions = {174: function}
+            thickness_fs = lfs.FunctionSet(functions)
+            E = csdl.Variable(value=69E9, name='E')
+            G = csdl.Variable(value=26E9, name='G')
+            density = csdl.Variable(value=2700, name='density')
+            nu = csdl.Variable(value=0.33, name='nu')
+            aluminum = cd.materials.IsotropicMaterial(name='aluminum', density=density, E=E, nu=nu, G=G)
+            material = aluminum
+            self.quantities.material_properties.add_material(material, thickness_fs)
+            
+            print("top surface thicknesses:")
+            print(self.quantities.material_properties.evaluate_thickness(parametric_top).value)
+
+            
+            
+            
+            # top_thickness = self.quantities.material_properties.add_material()
             # top_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_top)
             # bot_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_bot)
 

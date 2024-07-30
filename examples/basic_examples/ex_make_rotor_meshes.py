@@ -95,6 +95,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
     )
+    pusher_prop_blade
     # pusher_prop_blade.geometry.plot(opacity=0.5)
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
