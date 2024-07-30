@@ -181,12 +181,8 @@ class Wing(Component):
                 # Set the wetted area
                 self.parameters.S_wet = self.quantities.surface_area
 
-                t3 = time.time()
                 # Make the FFD block upon instantiation
                 ffd_block = self._make_ffd_block(self.geometry, tight_fit=tight_fit_ffd, degree=(1, 2, 1), num_coefficients=(2, 2, 2))
-                t4 = time.time()
-                print("time for making ffd_block", t4-t3)
-                # ffd_block.plot()
 
                 # Compute the corner points of the wing 
                 if self._orientation == "horizontal":
@@ -268,25 +264,6 @@ class Wing(Component):
 
         # Rotate the component about the axis
         wing_geometry.rotate(axis_origin=axis_origin, axis_vector=axis_vector / csdl.norm(axis_vector), angles=angle)
-
-        # # Re-evaluate all the discretizations associated with the wing
-        # for discretization_name, discretization in self._discretizations.items():
-        #     discretization._geom = wing_geometry
-        #     try:
-        #         discretization = discretization._update()
-        #         self._discretizations[discretization_name] = discretization
-        #     except AttributeError:
-        #         raise Exception(f"The discretization {discretization_name} does not have an '_update' method, which is neded to" + \
-        #                         " re-evaluate the geometry/meshes after the geometry coefficients have been changed")
-            
-
-        #     # Update the meshes in the mesh container
-        #     if mesh_container is not None:
-        #         print("mesh_container", mesh_container.items())
-        #         for mesh_name, mesh in mesh_container.items():
-        #             for discretization_name_mesh, discretization_mesh in mesh.discretizations.items():
-        #                 if discretization_mesh.identifier == discretization.identifier:
-        #                     mesh.discretizations[discretization_name_mesh] = discretization
 
     def _make_ffd_block(self, 
             entities : List[lfs.Function], 
@@ -685,6 +662,7 @@ class Wing(Component):
             export_half_wing:bool=False,
             spanwise_multiplicity:int=1,
             exclute_te:bool=False,
+            return_rib_points=False,
         ):
         """
         Construct ribs and spars for the given wing geometry.
@@ -726,7 +704,10 @@ class Wing(Component):
         csdl.check_parameter(LE_TE_interpolation, "LE_TE_interpolation", values=("ellipse", None))
         csdl.check_parameter(surf_index, "surf_index", types=int)
 
-        # Check if spar and rib locations are between 0 and 1
+        bay_mappings = {}
+
+
+        # Check if if spar and rib locations are between 0 and 1
         if spar_locations is not None:
             if not np.all((spar_locations > 0) & (spar_locations < 1)):
                 raise ValueError("all spar locations must be between 0 and 1 (excluding the endpoints)")
@@ -760,7 +741,7 @@ class Wing(Component):
         if num_spars == 1:
             raise Exception("Cannot have single spar. Provide at least two normalized spar locations.")
         if spar_function_space is None:
-            spar_function_space = lfs.BSplineSpace(2, (1, 1), (num_ribs, 2))
+            spar_function_space = lfs.BSplineSpace(2, (2, 1), (num_ribs, 2))
         if rib_function_space is None:
             if full_length_ribs:
                 if exclute_te:
@@ -982,7 +963,7 @@ class Wing(Component):
 
                 if i > 0:
                     # create surface panels
-                    panel_function_space = lfs.BSplineSpace(2, (1, 1), (num_rib_pts+1, spanwise_multiplicity+1))
+                    panel_function_space = lfs.BSplineSpace(2, (1, 2), (num_rib_pts+1, spanwise_multiplicity+1))
                     u_coords = np.linspace(0, 1, num_rib_pts+1)
                     fitting_coords = []
                     for j in range(spanwise_multiplicity+1):
@@ -1005,7 +986,7 @@ class Wing(Component):
                         wing_box_surf_index = self._add_geometry(wing_box_surf_index, bottom_surfs, "Wing_bottom_panel_", i, wing_box_geometry)
 
                     # create spar segments
-                    spar_segment_function_space = lfs.BSplineSpace(2, (1, 1), (spanwise_multiplicity+1, 2))
+                    spar_segment_function_space = lfs.BSplineSpace(2, (2, 1), (spanwise_multiplicity+1, 2))
                     # spar_segment_function_space = lfs.BSplineSpace(2, 1, (2, 2))
                     if full_length_ribs:
                         if finite_te and not exclute_te:
@@ -1037,6 +1018,9 @@ class Wing(Component):
         if export_wing_box:
             wing_box_geometry.plot(opacity=0.5)
             wing_box_geometry.export_iges("wing_box.igs")
+
+        if return_rib_points:
+            return ribs_top_base_array, ribs_bottom_base_array
          
     def _fit_surface(self, parametric_points:list, fitting_coords:list, function_space:lfs.FunctionSpace, mirror:bool, dependent:bool):
         """Fit a surface to the given parametric points."""
