@@ -97,6 +97,11 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     )
     pusher_prop_blade
     # pusher_prop_blade.geometry.plot(opacity=0.5)
+    E = csdl.Variable(value=69E9, name='E')
+    G = csdl.Variable(value=26E9, name='G')
+    density = csdl.Variable(value=2700, name='density')
+    nu = csdl.Variable(value=0.33, name='nu')
+    aluminum = cd.materials.IsotropicMaterial(name='aluminum', density=density, E=E, nu=nu, G=G)
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
                                             front_spar_geometry=front_spar_geometry,

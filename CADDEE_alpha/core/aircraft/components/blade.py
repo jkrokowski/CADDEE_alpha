@@ -301,7 +301,7 @@ class Blade(Wing):
         if rear_spar_geometry is not None:
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
-        num_parametric = 3
+        num_parametric = 100
 
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric)
@@ -314,7 +314,7 @@ class Blade(Wing):
             parametric_bot = [(bottom_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
             top_pts = self.geometry.evaluate(parametric_top, plot=False)
             bot_pts = self.geometry.evaluate(parametric_bot, plot=False)
-            top_pts_offset = self.geometry.evaluate_normals(parametric_top,plot=False)
+            top_normals = self.geometry.evaluate_normals(parametric_top,plot=False)
             thickness = csdl.Variable(value=skin_thickness, name='upper_wing_thickness')
             # thickness.set_as_design_variable(upper=0.05, lower=0.0001, scaler=1e3)
             function = lfs.Function(lfs.ConstantSpace(2), thickness)
@@ -327,18 +327,71 @@ class Blade(Wing):
             aluminum = cd.materials.IsotropicMaterial(name='aluminum', density=density, E=E, nu=nu, G=G)
             material = aluminum
             self.quantities.material_properties.add_material(material, thickness_fs)
+            top_offset_thicknesses = thickness / csdl.sqrt(1- (top_normals[:,1])**2)
+            top_normals_inplane = (top_normals@(np.array([[1,0,0],[0,0,1]])).T)
+            #broadcasting vector to matrix not working well in csdl, so have to use expand
+            top_pts_offset= ( top_pts[:,[0,2]] +
+                             top_normals_inplane* csdl.expand(top_offset_thicknesses,
+                                                                top_normals_inplane.shape,
+                                                                'i->ij')  )
+            # import lsdo_function_spaces as lfs
+            num_through_thickness = 2
+            inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//5,num_through_thickness))
+            stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
             
+            top_pts_parametric = np.concatenate([np.zeros((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
+            top_pts_offset_parametric = np.concatenate([np.ones((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
+            parametric_coords = np.concatenate([top_pts_parametric,top_pts_offset_parametric],axis=1)
+            print(parametric_coords.shape)
+            top_surf_xs = inplane_space.fit_function(stacked_pts,parametric_coords) 
+
+            # in progress
+            # stacked_pts = #top_pts and top_pts_offset (make a variable )
+            # parametric_coords = #0s and v_coords stacked with 1s and v_coords
+            # top_surf_xs = inplane_space.fit_function(stacked_pts,parametric_coords) 
+            # 
+            # top_skin_mesh= #msh from gmsh (done once in setup)
+            # top_surf_parametric_mesh = top_surf_xs.project(top_skin_mesh) # (done once in setup)
+            # top_surf_mesh = top_surf_xs.evaluate(top_surf_parametric_mesh) #this is a csdl mesh that changes with the thickness
+
             print("top surface thicknesses:")
             print(self.quantities.material_properties.evaluate_thickness(parametric_top).value)
 
-            
-            
-            
-            # top_thickness = self.quantities.material_properties.add_material()
-            # top_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_top)
-            # bot_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_bot)
+            print('top pts:')
+            print(top_pts.value)
 
-            pts=[top_pts,bot_pts]
+            print('top normals:')
+            print(top_normals.value)
+
+            print('offset thicknesses:')
+            print(top_offset_thicknesses.value)
+            # top_normals_inplane=top_normals[:,(0,2)]
+            # top_pts_offset=top_normals_inplane*thickness + top_pts[:,[0,2]]
+
+            print('top offset points')
+            print(top_pts_offset.value)
+
+            
+            # #this would work if there was not curvature along the beam axis
+            # # top_pts_offset = top_pts_normals*thickness + top_pts            
+            # #this projects the normals into the plane and renormalizes to a uniform thickness, but this doesn't correctly capture the actual thickness at this point
+            # # top_normals_inplane_normalized = ( (top_normals@(np.array([[1,0,0],[0,0,1]])).T) 
+            # #  * ( 1/np.linalg.norm((top_normals@(np.array([[1,0,0],[0,0,1]])).T),axis=1).reshape((4,1)) )  )
+            # #this projects the normals, but does not maintain the same offset distance as the original surface
+            # top_normals_inplane = (top_normals@(np.array([[1,0,0],[0,0,1]])).T)
+            # top_pts_offset = top_normals_inplane*thickness + top_pts[:,[0,2]]      
+            # # top_thickness = self.quantities.material_properties.add_material()
+            # # top_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_top)
+            # # bot_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_bot)
+            # print('offset inplane thickness coords:')
+            # print((top_normals_inplane*thickness).value)
+            # print('offset inplane thicknesses:')
+            # print(np.linalg.norm(((top_normals_inplane*thickness).value),axis=1))
+            # # print(csdl.norm((top_normals_inplane*thickness),axes=(1)).value)
+            # print("top pts offset inplane:")
+            # print(top_pts_offset.value)
+
+            pts=[(top_pts,top_pts_offset),bot_pts]
             if front_spar_geometry is not None:
                 #store front spar pts
                 parametric_front_spar = [(front_spar_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
@@ -411,18 +464,24 @@ class Blade(Wing):
 
         #TODO: Need to add some checks here for a successful offset operation and determine whether
         #   there are multiple bspline curves (e.g. a check for ISCLOSED)
-        for i in [5]:
-            top_pts = xs[i][0].value
+        for i in [3]:
+            (top_pts_csdl,top_pts_offset_csdl) = xs[i][0]
+            top_pts = top_pts_csdl.value
+            top_pts_offset=top_pts_offset_csdl.value
             bot_pts = xs[i][1].value
 
             top_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
-
             for top_pt in top_pts:
                 top_pt_array.SetValue(pt_num, gp_Pnt2d(top_pt[0], top_pt[2]))
                 pt_num +=1
-            # top_spline = Geom2dAPI_PointsToBSpline(top_pt_array).Curve()
-            top_spline = Geom2dAPI_PointsToBSpline(top_pt_array, bspline_order, bspline_order)
 
+            top_pt_offset_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
+            for top_pt_offset in top_pts_offset:
+                top_pt_offset_array.SetValue(pt_num, gp_Pnt2d(top_pt_offset[0], top_pt_offset[1]))
+                pt_num +=1
+            
+            top_spline = Geom2dAPI_PointsToBSpline(top_pt_array, bspline_order, bspline_order)
+            top_spline_offset = Geom2dAPI_PointsToBSpline(top_pt_offset_array, bspline_order, bspline_order)
             # top_spline_edge = BRepBuilderAPI_MakeEdge(top_spline).Edge()
             # top_spline_wire = BRepBuilderAPI_MakeWire(top_spline_edge).Wire()
             # display.DisplayShape(top_spline_wire)
@@ -433,7 +492,7 @@ class Blade(Wing):
             offset_spar_cap = 0.006
             offset_tol = 1e-10
 
-            top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), offset_upper)
+            # top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), offset_upper)
 
             bot_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
 
@@ -443,7 +502,7 @@ class Blade(Wing):
             # bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array).Curve()
             bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array, bspline_order, bspline_order) 
 
-            bot_spline_offset = Geom2d_OffsetCurve(bot_spline.Curve(), offset_lower)
+            # bot_spline_offset = Geom2d_OffsetCurve(bot_spline.Curve(), offset_lower)
             
             wire = make_wire([make_edge2d(top_spline.Curve()), make_edge2d(bot_spline.Curve())])
             # offset_wire = BRepOffsetAPI_MakeOffset(wire,dist,GeomAbs_JoinType.GeomAbs_Intersection, False)
@@ -481,10 +540,10 @@ class Blade(Wing):
             from OCC.Core.TopExp import TopExp_Explorer
             from OCC.Core.TopAbs import TopAbs_EDGE
             from OCC.Core.TopoDS import topods
-            from OCC.Core.TColgp import TColgp_Array1OfPnt,TColgp_HArray1OfPnt
+            from OCC.Core.TColgp import TColgp_Array1OfPnt
             from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
             from OCC.Display.SimpleGui import init_display
-            from OCC.Core.GeomAPI import GeomAPI_Interpolate
+            # from OCC.Core.GeomAPI import GeomAPI_Interpolate
 
             # Function to extract points from an edge
             def extract_points_from_edge(edge, num_samples=100):
@@ -531,7 +590,7 @@ class Blade(Wing):
                 bspline_curve = interpolator.Curve()
 
                 # Display the B-spline curve
-                display.DisplayShape(bspline_curve, update=True, color="black")
+                # display.DisplayShape(bspline_curve, update=True, color="black")
             else:
                 raise RuntimeError("Failed to create B-spline curve from points")
             print('bspline curve offset closed?:')
@@ -557,8 +616,8 @@ class Blade(Wing):
 
             display.DisplayShape(top_spline.Curve(),color='RED')
             display.DisplayShape(bot_spline.Curve(),color="YELLOW")
-            display.DisplayShape(top_spline_offset, color="Red")
-            display.DisplayShape(bot_spline_offset, color="Yellow")
+            display.DisplayShape(top_spline_offset.Curve(), color="BLACK")
+            # display.DisplayShape(bot_spline_offset, color="Yellow")
             # display.DisplayShape(trimmed_curve1, color="Black")
             # display.DisplayShape(trimmed_curve2, color="Black")
             # display.DisplayShape(offset_wire,color="RED")
