@@ -95,7 +95,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
     )
-    pusher_prop_blade
+    # pusher_prop_blade
     # pusher_prop_blade.geometry.plot(opacity=0.5)
     E = csdl.Variable(value=69E9, name='E')
     G = csdl.Variable(value=26E9, name='G')

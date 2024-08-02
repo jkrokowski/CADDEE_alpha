@@ -211,7 +211,7 @@ class Blade(Wing):
         
         num_spanwise = 10
         if spar_function_space is None:
-            spar_function_space = lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
+            spar_function_space = lfs.BSplineSpace(2, (3, 1), (num_spanwise, 2))
 
         #TODO: need to be able to determine where the root and where the tip is...
         # gather important points 
@@ -290,7 +290,8 @@ class Blade(Wing):
             bottom_geometry:lg.Geometry,
             front_spar_geometry:lg.Geometry=None,
             rear_spar_geometry:lg.Geometry=None,
-            num_spanwise=10
+            num_spanwise=10,
+            surf_index=2000
         ):
 
         #get surface indices
@@ -301,8 +302,7 @@ class Blade(Wing):
         if rear_spar_geometry is not None:
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
-        num_parametric = 100
-
+        num_parametric = 1000
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric)
         xs = []
@@ -330,21 +330,92 @@ class Blade(Wing):
             top_offset_thicknesses = thickness / csdl.sqrt(1- (top_normals[:,1])**2)
             top_normals_inplane = (top_normals@(np.array([[1,0,0],[0,0,1]])).T)
             #broadcasting vector to matrix not working well in csdl, so have to use expand
-            top_pts_offset= ( top_pts[:,[0,2]] +
-                             top_normals_inplane* csdl.expand(top_offset_thicknesses,
+            top_pts_offset_inplane = top_normals_inplane* csdl.expand(top_offset_thicknesses,
                                                                 top_normals_inplane.shape,
-                                                                'i->ij')  )
-            # import lsdo_function_spaces as lfs
-            num_through_thickness = 2
-            inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//5,num_through_thickness))
-            stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
-            
-            top_pts_parametric = np.concatenate([np.zeros((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
-            top_pts_offset_parametric = np.concatenate([np.ones((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
-            parametric_coords = np.concatenate([top_pts_parametric,top_pts_offset_parametric],axis=1)
-            print(parametric_coords.shape)
-            top_surf_xs = inplane_space.fit_function(stacked_pts,parametric_coords) 
+                                                                'i->ij')
+            top_pts_offsets = np.concatenate([top_pts_offset_inplane[:,0].value.reshape((num_parametric,1)),
+                                              np.zeros((num_parametric,1)),
+                                              top_pts_offset_inplane[:,1].value.reshape((num_parametric,1))],
+                                              axis=1)
+            print(top_pts_offsets.shape)
+            top_pts_offset= ( top_pts +
+                             top_pts_offsets)
 
+            num_through_thickness = 2 #this is the number of ctl pts to fit the surface
+            # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
+            inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//5,num_through_thickness))
+            # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
+            stacked_pts = np.concatenate([top_pts.value,top_pts_offset.value])
+            # stacked_pts = csdl.Variable(value=stacked_pts)
+            print(stacked_pts.shape)
+            # print(stacked_pts.value)
+            # top_pts_parametric = np.concatenate([np.zeros((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
+            # top_pts_offset_parametric = np.concatenate([np.ones((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
+            top_pts_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.zeros((v_coords.shape[0],1))],axis=1)
+            top_pts_offset_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.ones((v_coords.shape[0],1))],axis=1)
+            parametric_coords = np.concatenate([top_pts_parametric,top_pts_offset_parametric],axis=0)
+            print(parametric_coords.shape)
+            print(parametric_coords)
+            # parametric_coords = csdl.Variable(value=parametric_coords)
+            # top_surf_xs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
+          
+            # top_surf_xs = inplane_space.fit_function(values=stacked_pts,parametric_coordinates=parametric_coords) 
+            top_surf_xs_coeffs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
+            top_surf_xs = lfs.Function(inplane_space,top_surf_xs_coeffs)
+            top_surf_xs_name='top skin mesh'
+            
+            self._add_geometry(surf_index=surf_index,
+                                function=top_surf_xs,
+                                name=top_surf_xs_name)
+            surf_index+=1
+            top_surf_xs_geometry = self.create_subgeometry(search_names=top_surf_xs_name)
+
+            #
+            top_surf_xs_geometry.plot(opacity=0.5)
+            self.geometry.plot(opacity=0.5)
+
+            def mesh_curve_and_offset(pts,offset_pts):
+                ''' returns an xdmf mesh of a thickened curve in the plane'''
+                gmsh.initialize()
+                #add upper and lower surface points
+                pts_list = []
+                pts_offset_list = []
+                for pt,offset_pt in zip(pts.value,offset_pts.value):
+                    pts_list.append(gmsh.model.occ.add_point(pt[0],pt[1],pt[2]))
+                    pts_offset_list.append(gmsh.model.occ.add_point(offset_pt[0],offset_pt[1],offset_pt[2]))
+
+                spline = gmsh.model.occ.add_spline(pts_list)
+                spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
+                line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
+                line2 = gmsh.model.occ.add_line(pts_offset_list[-1],pts_list[-1])
+                
+                CL1 = gmsh.model.occ.add_curve_loop([spline,line2,spline_offset,line1])
+                gmsh.model.occ.add_plane_surface([CL1])
+                
+                gmsh.model.occ.synchronize()
+                
+                #need to have a more intelligent way of selecting mesh size
+                gmsh.option.setNumber("Mesh.MeshSizeMin", skin_thickness/2)
+                gmsh.option.setNumber("Mesh.MeshSizeMax", skin_thickness/2)
+                gmsh.model.mesh.generate(2)
+
+                gmsh.fltk.run()
+
+                filename = "output/blade_xs" + str(i) + '.msh'
+                gmsh.write(filename)
+                
+                gmsh.finalize()
+
+                return  filename
+
+            top_skin_mesh = mesh_curve_and_offset(top_pts,top_pts_offset)
+            
+            #give a gmsh .msh and geometry component
+            #return node values evaluated on surface, parametric coords and connectivity
+            cd.mesh_utils.import_mesh(file=top_skin_mesh,
+                                      component=top_surf_xs_geometry)
+            
+            # top_surf_xs.project
             # in progress
             # stacked_pts = #top_pts and top_pts_offset (make a variable )
             # parametric_coords = #0s and v_coords stacked with 1s and v_coords
@@ -370,7 +441,6 @@ class Blade(Wing):
 
             print('top offset points')
             print(top_pts_offset.value)
-
             
             # #this would work if there was not curvature along the beam axis
             # # top_pts_offset = top_pts_normals*thickness + top_pts            
