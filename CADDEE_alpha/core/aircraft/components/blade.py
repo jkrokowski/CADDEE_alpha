@@ -13,7 +13,8 @@ import csdl_alpha as csdl
 from typing import Union
 import lsdo_geo as lg
 import gmsh
-
+import os
+path = os.getcwd()
 
 
 
@@ -230,15 +231,20 @@ class Blade(Wing):
         # chord_direction_root = root_le-root_te
         # chord_direction_tip = r_tip_le-r_tip_te
         spanwise_direction = np.array([0,1,0])
-
+        
         u_coords=np.linspace(0,1,num_spanwise)
 
         parametric_LE = np.vstack([u_coords,np.ones((num_spanwise))]).T
         parametric_TE = np.vstack([u_coords,np.zeros((num_spanwise))]).T
 
-        physical_LE = blade.geometry.evaluate([(top_index,parametric_LE)],non_csdl=True)
-        physical_TE = blade.geometry.evaluate([(top_index,parametric_TE)],non_csdl=True)
-        
+        parametric_LE_tuple_list = [(top_index,parametric_LE[i,:]) for i in range(parametric_LE.shape[0])]
+        parametric_TE_tuple_list = [(top_index,parametric_TE[i,:]) for i in range(parametric_TE.shape[0])]
+        #minor bug in .evaluate() 
+        # physical_LE = blade.geometry.evaluate([(top_index,parametric_LE)],non_csdl=True)
+        # physical_TE = blade.geometry.evaluate([(top_index,parametric_TE)],non_csdl=True)
+        physical_LE = blade.geometry.evaluate(parametric_LE_tuple_list,non_csdl=True)
+        physical_TE = blade.geometry.evaluate(parametric_TE_tuple_list,non_csdl=True)
+
         #determine chord direction for each section
         chord_direction = physical_LE-physical_TE
         #determine direction perpendicular to chord direction in section plane
@@ -302,14 +308,14 @@ class Blade(Wing):
         if rear_spar_geometry is not None:
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
-        num_parametric = 1000
+        num_parametric = 250
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric)
         xs = []
         if front_spar_geometry is not None and rear_spar_geometry is not None:
             insertion_pts = np.empty((u_coords.shape[0],4),dtype=int)
         skin_thickness = 0.0005
-        for i,u_coord in enumerate(u_coords):
+        for i,u_coord in enumerate(u_coords[0:]):
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             parametric_bot = [(bottom_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
             top_pts = self.geometry.evaluate(parametric_top, plot=False)
@@ -337,7 +343,6 @@ class Blade(Wing):
                                               np.zeros((num_parametric,1)),
                                               top_pts_offset_inplane[:,1].value.reshape((num_parametric,1))],
                                               axis=1)
-            print(top_pts_offsets.shape)
             top_pts_offset= ( top_pts +
                              top_pts_offsets)
 
@@ -347,15 +352,14 @@ class Blade(Wing):
             # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
             stacked_pts = np.concatenate([top_pts.value,top_pts_offset.value])
             # stacked_pts = csdl.Variable(value=stacked_pts)
-            print(stacked_pts.shape)
+
             # print(stacked_pts.value)
             # top_pts_parametric = np.concatenate([np.zeros((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
             # top_pts_offset_parametric = np.concatenate([np.ones((v_coords.shape[0],1)),v_coords.reshape((v_coords.shape[0],1))],axis=1)
             top_pts_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.zeros((v_coords.shape[0],1))],axis=1)
             top_pts_offset_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.ones((v_coords.shape[0],1))],axis=1)
             parametric_coords = np.concatenate([top_pts_parametric,top_pts_offset_parametric],axis=0)
-            print(parametric_coords.shape)
-            print(parametric_coords)
+
             # parametric_coords = csdl.Variable(value=parametric_coords)
             # top_surf_xs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
           
@@ -371,11 +375,11 @@ class Blade(Wing):
             top_surf_xs_geometry = self.create_subgeometry(search_names=top_surf_xs_name)
 
             #
-            top_surf_xs_geometry.plot(opacity=0.5)
-            self.geometry.plot(opacity=0.5)
+            # top_surf_xs_geometry.plot(opacity=0.5)
+            # self.geometry.plot(opacity=0.5)
 
             def mesh_curve_and_offset(pts,offset_pts):
-                ''' returns an xdmf mesh of a thickened curve in the plane'''
+                ''' returns a mesh of a thickened curve in the plane'''
                 gmsh.initialize()
                 #add upper and lower surface points
                 pts_list = []
@@ -390,18 +394,24 @@ class Blade(Wing):
                 line2 = gmsh.model.occ.add_line(pts_offset_list[-1],pts_list[-1])
                 
                 CL1 = gmsh.model.occ.add_curve_loop([spline,line2,spline_offset,line1])
-                gmsh.model.occ.add_plane_surface([CL1])
+                surf = gmsh.model.occ.add_plane_surface([CL1])
+                gmsh.model.add_physical_group(2,[surf],name="surface")
+
+                #remove the pts so the import back into caddee isn't filled with thousands of pts
+                for pt in pts_list + pts_offset_list:
+                    gmsh.model.occ.remove([(0, pt)])
                 
                 gmsh.model.occ.synchronize()
                 
                 #need to have a more intelligent way of selecting mesh size
-                gmsh.option.setNumber("Mesh.MeshSizeMin", skin_thickness/2)
+                gmsh.option.setNumber("Mesh.MeshSizeMin", skin_thickness/20)
                 gmsh.option.setNumber("Mesh.MeshSizeMax", skin_thickness/2)
+                gmsh.option.set_number("Mesh.SaveAll", 2)
                 gmsh.model.mesh.generate(2)
 
                 gmsh.fltk.run()
 
-                filename = "output/blade_xs" + str(i) + '.msh'
+                filename = "stored_files/blade_xs" + str(i) + '.msh'
                 gmsh.write(filename)
                 
                 gmsh.finalize()
@@ -409,12 +419,15 @@ class Blade(Wing):
                 return  filename
 
             top_skin_mesh = mesh_curve_and_offset(top_pts,top_pts_offset)
+            # import meshio
+            # top_skin_mesh = meshio.read(top_skin_mesh)
             
             #give a gmsh .msh and geometry component
             #return node values evaluated on surface, parametric coords and connectivity
-            cd.mesh_utils.import_mesh(file=top_skin_mesh,
-                                      component=top_surf_xs_geometry)
-            
+            output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
+                                      component=top_surf_xs_geometry,
+                                      plot=False)
+
             # top_surf_xs.project
             # in progress
             # stacked_pts = #top_pts and top_pts_offset (make a variable )
@@ -425,22 +438,18 @@ class Blade(Wing):
             # top_surf_parametric_mesh = top_surf_xs.project(top_skin_mesh) # (done once in setup)
             # top_surf_mesh = top_surf_xs.evaluate(top_surf_parametric_mesh) #this is a csdl mesh that changes with the thickness
 
-            print("top surface thicknesses:")
-            print(self.quantities.material_properties.evaluate_thickness(parametric_top).value)
-
-            print('top pts:')
-            print(top_pts.value)
-
-            print('top normals:')
-            print(top_normals.value)
-
-            print('offset thicknesses:')
-            print(top_offset_thicknesses.value)
-            # top_normals_inplane=top_normals[:,(0,2)]
-            # top_pts_offset=top_normals_inplane*thickness + top_pts[:,[0,2]]
-
-            print('top offset points')
-            print(top_pts_offset.value)
+            # print("top surface thicknesses:")
+            # print(self.quantities.material_properties.evaluate_thickness(parametric_top).value)
+            # print('top pts:')
+            # print(top_pts.value)
+            # print('top normals:')
+            # print(top_normals.value)
+            # print('offset thicknesses:')
+            # print(top_offset_thicknesses.value)
+            # # top_normals_inplane=top_normals[:,(0,2)]
+            # # top_pts_offset=top_normals_inplane*thickness + top_pts[:,[0,2]]
+            # print('top offset points')
+            # print(top_pts_offset.value)
             
             # #this would work if there was not curvature along the beam axis
             # # top_pts_offset = top_pts_normals*thickness + top_pts            
@@ -461,60 +470,60 @@ class Blade(Wing):
             # print("top pts offset inplane:")
             # print(top_pts_offset.value)
 
-            pts=[(top_pts,top_pts_offset),bot_pts]
-            if front_spar_geometry is not None:
-                #store front spar pts
-                parametric_front_spar = [(front_spar_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
-                front_spar_pts = self.geometry.evaluate(parametric_front_spar, plot=False)
-                pts.append(front_spar_pts)
+            # pts=[(top_pts,top_pts_offset),bot_pts]
+            # if front_spar_geometry is not None:
+            #     #store front spar pts
+            #     parametric_front_spar = [(front_spar_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
+            #     front_spar_pts = self.geometry.evaluate(parametric_front_spar, plot=False)
+            #     pts.append(front_spar_pts)
 
-                #add the start and end points to the top and bottom surface to enforce intersection
-                #front spar point added to top curve
-                insert_idx=np.argmin(np.linalg.norm(top_pts.value - front_spar_pts.value[0,:],axis=1))
-                #check if the insert idx is at the start or the end of the list
-                if insert_idx == 0:
-                    continue
-                elif insert_idx == top_pts.shape[0]-1:
-                    insert_idx-=1
-                else:
-                    #check surrounding points to determine which side of closest point to insert spar point
-                    surrounding_indices = [insert_idx-1,insert_idx+1]
-                    surrounding_to_insert = np.linalg.norm(top_pts.value[surrounding_indices,:] - top_pts.value[insert_idx,:],axis=1)
-                    surrounding_to_spar = np.linalg.norm(top_pts.value[surrounding_indices,:] - front_spar_pts.value[0,:],axis=1)
-                    if np.argmin(surrounding_to_insert-surrounding_to_spar) == 0:
-                        insert_idx = insert_idx+1
-                    elif np.argmin(surrounding_to_insert-surrounding_to_spar) == 1:
-                        insert_idx=insert_idx
+            #     #add the start and end points to the top and bottom surface to enforce intersection
+            #     #front spar point added to top curve
+            #     insert_idx=np.argmin(np.linalg.norm(top_pts.value - front_spar_pts.value[0,:],axis=1))
+            #     #check if the insert idx is at the start or the end of the list
+            #     if insert_idx == 0:
+            #         continue
+            #     elif insert_idx == top_pts.shape[0]-1:
+            #         insert_idx-=1
+            #     else:
+            #         #check surrounding points to determine which side of closest point to insert spar point
+            #         surrounding_indices = [insert_idx-1,insert_idx+1]
+            #         surrounding_to_insert = np.linalg.norm(top_pts.value[surrounding_indices,:] - top_pts.value[insert_idx,:],axis=1)
+            #         surrounding_to_spar = np.linalg.norm(top_pts.value[surrounding_indices,:] - front_spar_pts.value[0,:],axis=1)
+            #         if np.argmin(surrounding_to_insert-surrounding_to_spar) == 0:
+            #             insert_idx = insert_idx+1
+            #         elif np.argmin(surrounding_to_insert-surrounding_to_spar) == 1:
+            #             insert_idx=insert_idx
 
-                insertion_pts[i,0] = insert_idx
+            #     insertion_pts[i,0] = insert_idx
                
-                #front spar point added to bottom curve
-                insert_idx=np.argmin(np.linalg.norm(bot_pts.value - front_spar_pts.value[-1,:],axis=1))
-                # insert_start,insert_end = np.sort(sorted_indices[0:2])
-                #check if the insert idx is at the start or the end of the list
-                if insert_idx == 0:
-                    continue
-                elif insert_idx == bot_pts.shape[0]-1:
-                    insert_idx-=1
-                else:
-                    #check surrounding points to determine which side of closest point to insert spar point
-                    surrounding_indices = [insert_idx-1,insert_idx+1]
-                    surrounding_to_insert = np.linalg.norm(bot_pts.value[surrounding_indices,:] - bot_pts.value[insert_idx,:],axis=1)
-                    surrounding_to_spar = np.linalg.norm(bot_pts.value[surrounding_indices,:] - front_spar_pts.value[-1,:],axis=1)
-                    if np.argmin(surrounding_to_insert-surrounding_to_spar) == 0:
-                        insert_idx = insert_idx+1
-                    elif np.argmin(surrounding_to_insert-surrounding_to_spar) == 1:
-                        insert_idx=insert_idx
+            #     #front spar point added to bottom curve
+            #     insert_idx=np.argmin(np.linalg.norm(bot_pts.value - front_spar_pts.value[-1,:],axis=1))
+            #     # insert_start,insert_end = np.sort(sorted_indices[0:2])
+            #     #check if the insert idx is at the start or the end of the list
+            #     if insert_idx == 0:
+            #         continue
+            #     elif insert_idx == bot_pts.shape[0]-1:
+            #         insert_idx-=1
+            #     else:
+            #         #check surrounding points to determine which side of closest point to insert spar point
+            #         surrounding_indices = [insert_idx-1,insert_idx+1]
+            #         surrounding_to_insert = np.linalg.norm(bot_pts.value[surrounding_indices,:] - bot_pts.value[insert_idx,:],axis=1)
+            #         surrounding_to_spar = np.linalg.norm(bot_pts.value[surrounding_indices,:] - front_spar_pts.value[-1,:],axis=1)
+            #         if np.argmin(surrounding_to_insert-surrounding_to_spar) == 0:
+            #             insert_idx = insert_idx+1
+            #         elif np.argmin(surrounding_to_insert-surrounding_to_spar) == 1:
+            #             insert_idx=insert_idx
 
-                insertion_pts[i,1] = insert_idx
+            #     insertion_pts[i,1] = insert_idx
 
-            if rear_spar_geometry is not None:
-                #store spar
-                parametric_rear_spar = [(rear_spar_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
-                rear_spar_pts = self.geometry.evaluate(parametric_rear_spar, plot=False)
-                pts.append(rear_spar_pts)
+            # if rear_spar_geometry is not None:
+            #     #store spar
+            #     parametric_rear_spar = [(rear_spar_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
+            #     rear_spar_pts = self.geometry.evaluate(parametric_rear_spar, plot=False)
+            #     pts.append(rear_spar_pts)
             
-            xs.append(pts)
+            # xs.append(pts)
 
         from OCC.Core.gp import gp_Pnt2d
         from OCC.Core.TColgp import TColgp_Array1OfPnt2d
