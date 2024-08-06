@@ -181,8 +181,7 @@ class Blade(Wing):
             spar_locations:np.ndarray=None,
             spar_function_space:lfs.FunctionSpace=None,
             surf_index:int=1000,
-            offset:np.ndarray=np.array([0., 0., .23]), 
-
+            offset:np.ndarray=np.array([0., 0., .23])
         ):
         '''
         Construct the internal geometry of the rotor blade based on input 
@@ -200,14 +199,14 @@ class Blade(Wing):
         
         blade = self
 
-        #get surface indices
+        #get and store indices of surfaces in blade
         top_index =list(top_geometry.function_names.keys())[0]
         bot_index =list(bottom_geometry.function_names.keys())[0]
         front_spar_index = surf_index
         rear_spar_index = surf_index+1
         
         num_spars = spar_locations.shape[0]
-        if num_spars == 1:
+        if num_spars != 2:
             raise Exception("Cannot have single spar. Provide at least two normalized spar locations.")
         
         num_spanwise = 10
@@ -290,6 +289,8 @@ class Blade(Wing):
 
         return front_spar_geometry,rear_spar_geometry
     
+    # def construct_thickness_functions(self):
+
     def create_beam_xs_meshes(
             self,
             top_geometry:lg.Geometry,
@@ -302,53 +303,113 @@ class Blade(Wing):
 
         #get surface indices
         top_index =list(top_geometry.function_names.keys())[0]
-        bottom_index =list(bottom_geometry.function_names.keys())[0]
+        bot_index =list(bottom_geometry.function_names.keys())[0]
         if front_spar_geometry is not None:
             front_spar_index =list(front_spar_geometry.function_names.keys())[0]
         if rear_spar_geometry is not None:
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
-        num_parametric = 250
+        #number of parametric points to be evaluated for each surface
+        num_parametric = 1000
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric)
         xs = []
-        if front_spar_geometry is not None and rear_spar_geometry is not None:
-            insertion_pts = np.empty((u_coords.shape[0],4),dtype=int)
-        skin_thickness = 0.0005
-        for i,u_coord in enumerate(u_coords[0:]):
-            parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
-            parametric_bot = [(bottom_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
-            top_pts = self.geometry.evaluate(parametric_top, plot=False)
-            bot_pts = self.geometry.evaluate(parametric_bot, plot=False)
-            top_normals = self.geometry.evaluate_normals(parametric_top,plot=False)
-            thickness = csdl.Variable(value=skin_thickness, name='upper_wing_thickness')
-            # thickness.set_as_design_variable(upper=0.05, lower=0.0001, scaler=1e3)
-            function = lfs.Function(lfs.ConstantSpace(2), thickness)
-            functions = {174: function}
-            thickness_fs = lfs.FunctionSet(functions)
-            E = csdl.Variable(value=69E9, name='E')
-            G = csdl.Variable(value=26E9, name='G')
-            density = csdl.Variable(value=2700, name='density')
-            nu = csdl.Variable(value=0.33, name='nu')
-            aluminum = cd.materials.IsotropicMaterial(name='aluminum', density=density, E=E, nu=nu, G=G)
-            material = aluminum
-            self.quantities.material_properties.add_material(material, thickness_fs)
-            top_offset_thicknesses = thickness / csdl.sqrt(1- (top_normals[:,1])**2)
-            top_normals_inplane = (top_normals@(np.array([[1,0,0],[0,0,1]])).T)
-            #broadcasting vector to matrix not working well in csdl, so have to use expand
-            top_pts_offset_inplane = top_normals_inplane* csdl.expand(top_offset_thicknesses,
-                                                                top_normals_inplane.shape,
-                                                                'i->ij')
-            top_pts_offsets = np.concatenate([top_pts_offset_inplane[:,0].value.reshape((num_parametric,1)),
-                                              np.zeros((num_parametric,1)),
-                                              top_pts_offset_inplane[:,1].value.reshape((num_parametric,1))],
-                                              axis=1)
-            top_pts_offset= ( top_pts +
-                             top_pts_offsets)
+        # if front_spar_geometry is not None and rear_spar_geometry is not None:
+        #     insertion_pts = np.empty((u_coords.shape[0],4),dtype=int)
+        
+        skin_thickness = 0.0001
+        
+        for i,u_coord in enumerate(u_coords):
 
+
+            def get_pts_and_offset_pts(parametric_pts):
+                pts = self.geometry.evaluate(parametric_pts, plot=False)
+                normals = self.geometry.evaluate_normals(parametric_top,plot=False)
+                thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_pts)
+
+                #perfom adjustment of out of plane normal
+                offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
+
+                normals_inplane = (normals@(np.array([[1,0,0],[0,0,1]])).T)
+
+                #broadcasting vector to matrix not working well in csdl, so have to use expand
+                offsets_inplane = normals_inplane* csdl.expand(offset_thicknesses,
+                                                                    normals_inplane.shape,
+                                                                    'i->ij')
+                offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_parametric,1)),
+                                                np.zeros((num_parametric,1)),
+                                                offsets_inplane[:,1].value.reshape((num_parametric,1))],
+                                                axis=1)
+                offset_pts = ( pts + offsets)
+                return pts,offset_pts
+            
+            # thickness = csdl.Variable(value=skin_thickness, name='upper_wing_thickness')
+
+            parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            
+            top_pts,top_pts_offset = get_pts_and_offset_pts(parametric_top)
+            
+            # top_pts = self.geometry.evaluate(parametric_top, plot=False)
+            # top_normals = self.geometry.evaluate_normals(parametric_top,plot=False)
+            
+            parametric_bot = [(bot_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
+            bot_pts = self.geometry.evaluate(parametric_bot, plot=False)
+            bot_normals = self.geometry.evaluate_normals(parametric_bot,plot=False)
+
+            # # thickness.set_as_design_variable(upper=0.05, lower=0.0001, scaler=1e3)
+            # function = lfs.Function(lfs.ConstantSpace(2), thickness)
+            # functions = {top_index: function, bot_index: function}
+            # thickness_fs = lfs.FunctionSet(functions)
+            # # E = csdl.Variable(value=69E9, name='E')
+            # # G = csdl.Variable(value=26E9, name='G')
+            # # density = csdl.Variable(value=2700, name='density')
+            # # nu = csdl.Variable(value=0.33, name='nu')
+            # # aluminum = cd.materials.IsotropicMaterial(name='aluminum', density=density, E=E, nu=nu, G=G)
+            # material = self.quantities.material_properties.material
+
+            # self.quantities.material_properties.set_material(material, thickness_fs)
+            
+            # top_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_top)
+            
+            # top_offset_thicknesses = top_thicknesses / csdl.sqrt(1- (top_normals[:,1])**2)
+            # # top_offset_thicknesses = thickness / csdl.sqrt(1- (top_normals[:,1])**2)
+            # top_normals_inplane = (top_normals@(np.array([[1,0,0],[0,0,1]])).T)
+            # #broadcasting vector to matrix not working well in csdl, so have to use expand
+            # top_pts_offset_inplane = top_normals_inplane* csdl.expand(top_offset_thicknesses,
+            #                                                     top_normals_inplane.shape,
+            #                                                     'i->ij')
+            # top_pts_offsets = np.concatenate([top_pts_offset_inplane[:,0].value.reshape((num_parametric,1)),
+            #                                   np.zeros((num_parametric,1)),
+            #                                   top_pts_offset_inplane[:,1].value.reshape((num_parametric,1))],
+            #                                   axis=1)
+            # top_pts_offset= ( top_pts +
+            #                  top_pts_offsets)
+            
+            def fit_xs_surface(pts,offset_pts,surf_name,surf_index=surf_index):
+                num_through_thickness = 2 #this is the number of ctl pts to fit the surface
+                # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
+                inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//4,num_through_thickness))
+                # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
+                stacked_pts = np.concatenate([pts.value,offset_pts.value])
+                pts_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.zeros((v_coords.shape[0],1))],axis=1)
+                pts_offset_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.ones((v_coords.shape[0],1))],axis=1)
+                parametric_coords = np.concatenate([top_pts_parametric,top_pts_offset_parametric],axis=0)
+                
+                surf_xs_coeffs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
+                surf_xs = lfs.Function(inplane_space,surf_xs_coeffs)
+                surf_xs_name=surf_name
+
+                self._add_geometry(surf_index=surf_index,
+                                function=surf_xs,
+                                name=surf_xs_name)
+                surf_index+=1
+
+                # xs_geometry = self.create_subgeometry(search_names=surf_xs_name)
+                return 
+            
             num_through_thickness = 2 #this is the number of ctl pts to fit the surface
             # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
-            inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//5,num_through_thickness))
+            inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//4,num_through_thickness))
             # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
             stacked_pts = np.concatenate([top_pts.value,top_pts_offset.value])
             # stacked_pts = csdl.Variable(value=stacked_pts)
@@ -372,11 +433,14 @@ class Blade(Wing):
                                 function=top_surf_xs,
                                 name=top_surf_xs_name)
             surf_index+=1
+
+
             top_surf_xs_geometry = self.create_subgeometry(search_names=top_surf_xs_name)
 
-            #
-            # top_surf_xs_geometry.plot(opacity=0.5)
-            # self.geometry.plot(opacity=0.5)
+            fit_xs_surface(top_pts,top_pts_offset,surf_name=top_surf_xs_name,surf_index=surf_index)
+
+            top_surf_xs_geometry.plot(opacity=0.5)
+            self.geometry.plot(opacity=0.5)
 
             def mesh_curve_and_offset(pts,offset_pts):
                 ''' returns a mesh of a thickened curve in the plane'''
@@ -404,8 +468,8 @@ class Blade(Wing):
                 gmsh.model.occ.synchronize()
                 
                 #need to have a more intelligent way of selecting mesh size
-                gmsh.option.setNumber("Mesh.MeshSizeMin", skin_thickness/20)
-                gmsh.option.setNumber("Mesh.MeshSizeMax", skin_thickness/2)
+                gmsh.option.setNumber("Mesh.MeshSizeMin", skin_thickness*5)
+                gmsh.option.setNumber("Mesh.MeshSizeMax", skin_thickness*10)
                 gmsh.option.set_number("Mesh.SaveAll", 2)
                 gmsh.model.mesh.generate(2)
 
@@ -426,7 +490,27 @@ class Blade(Wing):
             #return node values evaluated on surface, parametric coords and connectivity
             output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
                                       component=top_surf_xs_geometry,
-                                      plot=False)
+                                      plot=True)
+    
+    def _get_intersection_idx(self,curve_pts,intersection_pt):
+        ''' find where an additional point should be store to add to the b-spline curve'''
+        insert_idx=np.argmin(np.linalg.norm(curve_pts - intersection_pt,axis=1))
+        #check if the insert idx is at the start or the end of the list
+        if insert_idx == 0:
+            insert_idx #unchanged
+        elif insert_idx == curve_pts.shape[0]-1:
+            insert_idx-=1
+        else:
+            #check surrounding points to determine which side of closest point to insert spar point
+            surrounding_indices = [insert_idx-1,insert_idx+1]
+            surrounding_to_insert = np.linalg.norm(curve_pts[surrounding_indices,:] - curve_pts[insert_idx,:],axis=1)
+            surrounding_to_spar = np.linalg.norm(curve_pts[surrounding_indices,:] - intersection_pt,axis=1)
+            if np.argmin(surrounding_to_insert-surrounding_to_spar) == 0:
+                insert_idx = insert_idx+1
+            elif np.argmin(surrounding_to_insert-surrounding_to_spar) == 1:
+                insert_idx=insert_idx
+        
+        return insert_idx
 
             # top_surf_xs.project
             # in progress
@@ -525,437 +609,417 @@ class Blade(Wing):
             
             # xs.append(pts)
 
-        from OCC.Core.gp import gp_Pnt2d
-        from OCC.Core.TColgp import TColgp_Array1OfPnt2d
-        from OCC.Core.Geom2dAPI import Geom2dAPI_PointsToBSpline,Geom2dAPI_InterCurveCurve
-        from OCC.Core.Geom2d import Geom2d_OffsetCurve,Geom2d_TrimmedCurve
-        from OCC.Display.SimpleGui import init_display
-        from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire,BRepBuilderAPI_MakeFace
-        from OCC.Extend.ShapeFactory import make_wire, make_edge2d,make_edge
-        from OCC.Core.BRepOffsetAPI import BRepOffsetAPI_MakeOffset
-        # from OCC.Core.GeomAbs import GeomAbs_JoinType
-        from OCC.Core.GeomAbs import GeomAbs_Arc,GeomAbs_C2
-        from OCC.Core.BRepOffset import BRepOffset_Skin
+        # from OCC.Core.gp import gp_Pnt2d
+        # from OCC.Core.TColgp import TColgp_Array1OfPnt2d
+        # from OCC.Core.Geom2dAPI import Geom2dAPI_PointsToBSpline,Geom2dAPI_InterCurveCurve
+        # from OCC.Core.Geom2d import Geom2d_OffsetCurve,Geom2d_TrimmedCurve
+        # from OCC.Display.SimpleGui import init_display
+        # from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire,BRepBuilderAPI_MakeFace
+        # from OCC.Extend.ShapeFactory import make_wire, make_edge2d,make_edge
+        # from OCC.Core.BRepOffsetAPI import BRepOffsetAPI_MakeOffset
+        # # from OCC.Core.GeomAbs import GeomAbs_JoinType
+        # from OCC.Core.GeomAbs import GeomAbs_Arc,GeomAbs_C2
+        # from OCC.Core.BRepOffset import BRepOffset_Skin
 
-        bspline_order = 3
-        display, start_display, add_menu, add_function_to_menu = init_display()
-        pt_num = 1
+        # bspline_order = 3
+        # display, start_display, add_menu, add_function_to_menu = init_display()
+        # pt_num = 1
 
-        #TODO: Need to add some checks here for a successful offset operation and determine whether
-        #   there are multiple bspline curves (e.g. a check for ISCLOSED)
-        for i in [3]:
-            (top_pts_csdl,top_pts_offset_csdl) = xs[i][0]
-            top_pts = top_pts_csdl.value
-            top_pts_offset=top_pts_offset_csdl.value
-            bot_pts = xs[i][1].value
+        # #TODO: Need to add some checks here for a successful offset operation and determine whether
+        # #   there are multiple bspline curves (e.g. a check for ISCLOSED)
+        # for i in [3]:
+        #     (top_pts_csdl,top_pts_offset_csdl) = xs[i][0]
+        #     top_pts = top_pts_csdl.value
+        #     top_pts_offset=top_pts_offset_csdl.value
+        #     bot_pts = xs[i][1].value
 
-            top_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
-            for top_pt in top_pts:
-                top_pt_array.SetValue(pt_num, gp_Pnt2d(top_pt[0], top_pt[2]))
-                pt_num +=1
+        #     top_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
+        #     for top_pt in top_pts:
+        #         top_pt_array.SetValue(pt_num, gp_Pnt2d(top_pt[0], top_pt[2]))
+        #         pt_num +=1
 
-            top_pt_offset_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
-            for top_pt_offset in top_pts_offset:
-                top_pt_offset_array.SetValue(pt_num, gp_Pnt2d(top_pt_offset[0], top_pt_offset[1]))
-                pt_num +=1
+        #     top_pt_offset_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
+        #     for top_pt_offset in top_pts_offset:
+        #         top_pt_offset_array.SetValue(pt_num, gp_Pnt2d(top_pt_offset[0], top_pt_offset[1]))
+        #         pt_num +=1
             
-            top_spline = Geom2dAPI_PointsToBSpline(top_pt_array, bspline_order, bspline_order)
-            top_spline_offset = Geom2dAPI_PointsToBSpline(top_pt_offset_array, bspline_order, bspline_order)
-            # top_spline_edge = BRepBuilderAPI_MakeEdge(top_spline).Edge()
-            # top_spline_wire = BRepBuilderAPI_MakeWire(top_spline_edge).Wire()
-            # display.DisplayShape(top_spline_wire)
-            offset_distance = 0.0005
-            offset_upper = 0.0005
-            offset_lower = 0.0005
-            offset_spar = 0.005
-            offset_spar_cap = 0.006
-            offset_tol = 1e-10
+        #     top_spline = Geom2dAPI_PointsToBSpline(top_pt_array, bspline_order, bspline_order)
+        #     top_spline_offset = Geom2dAPI_PointsToBSpline(top_pt_offset_array, bspline_order, bspline_order)
+        #     # top_spline_edge = BRepBuilderAPI_MakeEdge(top_spline).Edge()
+        #     # top_spline_wire = BRepBuilderAPI_MakeWire(top_spline_edge).Wire()
+        #     # display.DisplayShape(top_spline_wire)
+        #     offset_distance = 0.0005
+        #     offset_upper = 0.0005
+        #     offset_lower = 0.0005
+        #     offset_spar = 0.005
+        #     offset_spar_cap = 0.006
+        #     offset_tol = 1e-10
 
-            # top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), offset_upper)
+        #     # top_spline_offset = Geom2d_OffsetCurve(top_spline.Curve(), offset_upper)
 
-            bot_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
+        #     bot_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
 
-            for bot_pt in bot_pts:
-                bot_pt_array.SetValue(pt_num, gp_Pnt2d(bot_pt[0], bot_pt[2]))
-                pt_num+=1
-            # bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array).Curve()
-            bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array, bspline_order, bspline_order) 
+        #     for bot_pt in bot_pts:
+        #         bot_pt_array.SetValue(pt_num, gp_Pnt2d(bot_pt[0], bot_pt[2]))
+        #         pt_num+=1
+        #     # bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array).Curve()
+        #     bot_spline = Geom2dAPI_PointsToBSpline(bot_pt_array, bspline_order, bspline_order) 
 
-            # bot_spline_offset = Geom2d_OffsetCurve(bot_spline.Curve(), offset_lower)
+        #     # bot_spline_offset = Geom2d_OffsetCurve(bot_spline.Curve(), offset_lower)
             
-            wire = make_wire([make_edge2d(top_spline.Curve()), make_edge2d(bot_spline.Curve())])
-            # offset_wire = BRepOffsetAPI_MakeOffset(wire,dist,GeomAbs_JoinType.GeomAbs_Intersection, False)
-            # offset = BRepOffsetAPI_MakeOffset()
-            # offset.Init(GeomAbs_Arc)
-            # offset.AddWire(wire)
-            # offset.Perform(dist)
-            # offset_wire = offset.Shape()
+        #     wire = make_wire([make_edge2d(top_spline.Curve()), make_edge2d(bot_spline.Curve())])
+        #     # offset_wire = BRepOffsetAPI_MakeOffset(wire,dist,GeomAbs_JoinType.GeomAbs_Intersection, False)
+        #     # offset = BRepOffsetAPI_MakeOffset()
+        #     # offset.Init(GeomAbs_Arc)
+        #     # offset.AddWire(wire)
+        #     # offset.Perform(dist)
+        #     # offset_wire = offset.Shape()
 
-            #BSPLINE OFFSET CONSTRUCTION HERE....
-            from OCC.Core.BRepCheck import BRepCheck_Analyzer
-            def check_geometry(shape):
-                analyzer = BRepCheck_Analyzer(shape)
-                return analyzer.IsValid()
+        #     #BSPLINE OFFSET CONSTRUCTION HERE....
+        #     from OCC.Core.BRepCheck import BRepCheck_Analyzer
+        #     def check_geometry(shape):
+        #         analyzer = BRepCheck_Analyzer(shape)
+        #         return analyzer.IsValid()
             
-            print("OML:")
-            print(wire.Closed())
+        #     print("OML:")
+        #     print(wire.Closed())
 
-            offset_builder = BRepOffsetAPI_MakeOffset(wire, BRepOffset_Skin)
-            offset_builder.Perform(-offset_distance,offset_tol)
+        #     offset_builder = BRepOffsetAPI_MakeOffset(wire, BRepOffset_Skin)
+        #     offset_builder.Perform(-offset_distance,offset_tol)
 
-            #check offsetbuilder finished successfully
-            print('offset success?:')
-            print(offset_builder.IsDone())
+        #     #check offsetbuilder finished successfully
+        #     print('offset success?:')
+        #     print(offset_builder.IsDone())
 
-            print('OML wire validity:')
-            print(check_geometry(wire))
+        #     print('OML wire validity:')
+        #     print(check_geometry(wire))
 
-            offset_wire = offset_builder.Shape()
+        #     offset_wire = offset_builder.Shape()
             
-            print('offset closed?:')
-            print(offset_wire.Closed() )     
+        #     print('offset closed?:')
+        #     print(offset_wire.Closed() )     
 
-            from OCC.Core.BRep import BRep_Tool
-            from OCC.Core.TopExp import TopExp_Explorer
-            from OCC.Core.TopAbs import TopAbs_EDGE
-            from OCC.Core.TopoDS import topods
-            from OCC.Core.TColgp import TColgp_Array1OfPnt
-            from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
-            from OCC.Display.SimpleGui import init_display
-            # from OCC.Core.GeomAPI import GeomAPI_Interpolate
+        #     from OCC.Core.BRep import BRep_Tool
+        #     from OCC.Core.TopExp import TopExp_Explorer
+        #     from OCC.Core.TopAbs import TopAbs_EDGE
+        #     from OCC.Core.TopoDS import topods
+        #     from OCC.Core.TColgp import TColgp_Array1OfPnt
+        #     from OCC.Core.GeomAPI import GeomAPI_PointsToBSpline
+        #     from OCC.Display.SimpleGui import init_display
+        #     # from OCC.Core.GeomAPI import GeomAPI_Interpolate
 
-            # Function to extract points from an edge
-            def extract_points_from_edge(edge, num_samples=100):
-                curve_handle, first, last = BRep_Tool.Curve(edge)
-                if curve_handle is None:
-                    return []
+        #     # Function to extract points from an edge
+        #     def extract_points_from_edge(edge, num_samples=100):
+        #         curve_handle, first, last = BRep_Tool.Curve(edge)
+        #         if curve_handle is None:
+        #             return []
                 
-                points = []
-                step = (last - first) / num_samples
-                for i in range(num_samples + 1):
-                    pnt = curve_handle.Value(first + i * step)
-                    points.append(pnt)
-                return points
+        #         points = []
+        #         step = (last - first) / num_samples
+        #         for i in range(num_samples + 1):
+        #             pnt = curve_handle.Value(first + i * step)
+        #             points.append(pnt)
+        #         return points
 
-            # Function to convert wire to a list of points
-            def wire_to_points(wire, num_samples=100):
-                points = []
-                explorer = TopExp_Explorer(wire, TopAbs_EDGE)
-                num_edges = 0
-                while explorer.More():
-                    edge = topods.Edge(explorer.Current())
-                    edge_points = extract_points_from_edge(edge, num_samples)
-                    points.extend(edge_points)
-                    explorer.Next()
-                    num_edges+=1
-                print('num_edges:')
-                print(num_edges)
-                return points
+        #     # Function to convert wire to a list of points
+        #     def wire_to_points(wire, num_samples=100):
+        #         points = []
+        #         explorer = TopExp_Explorer(wire, TopAbs_EDGE)
+        #         num_edges = 0
+        #         while explorer.More():
+        #             edge = topods.Edge(explorer.Current())
+        #             edge_points = extract_points_from_edge(edge, num_samples)
+        #             points.extend(edge_points)
+        #             explorer.Next()
+        #             num_edges+=1
+        #         print('num_edges:')
+        #         print(num_edges)
+        #         return points
 
-            # Extract points from the offset wire
-            points = wire_to_points(offset_wire,100)
+        #     # Extract points from the offset wire
+        #     points = wire_to_points(offset_wire,100)
 
-            # Create TColgp_Array1OfPnt from points
-            num_points = len(points)
-            # array_of_points = TColgp_HArray1OfPnt(1, ndum_points)
-            array_of_points = TColgp_Array1OfPnt(1, num_points)
-            for j, pnt in enumerate(points):
-                array_of_points.SetValue(j + 1, pnt)
+        #     # Create TColgp_Array1OfPnt from points
+        #     num_points = len(points)
+        #     # array_of_points = TColgp_HArray1OfPnt(1, ndum_points)
+        #     array_of_points = TColgp_Array1OfPnt(1, num_points)
+        #     for j, pnt in enumerate(points):
+        #         array_of_points.SetValue(j + 1, pnt)
 
-            # Create a B-spline curve from the points
-            # interpolator = GeomAPI_PointsToBSpline(array_of_points,3,8)
-            interpolator = GeomAPI_PointsToBSpline(array_of_points,3,3,GeomAbs_C2,1e-6)
-            if interpolator.IsDone():
-                bspline_curve = interpolator.Curve()
+        #     # Create a B-spline curve from the points
+        #     # interpolator = GeomAPI_PointsToBSpline(array_of_points,3,8)
+        #     interpolator = GeomAPI_PointsToBSpline(array_of_points,3,3,GeomAbs_C2,1e-6)
+        #     if interpolator.IsDone():
+        #         bspline_curve = interpolator.Curve()
 
-                # Display the B-spline curve
-                # display.DisplayShape(bspline_curve, update=True, color="black")
-            else:
-                raise RuntimeError("Failed to create B-spline curve from points")
-            print('bspline curve offset closed?:')
-            print(bspline_curve.IsClosed())
+        #         # Display the B-spline curve
+        #         # display.DisplayShape(bspline_curve, update=True, color="black")
+        #     else:
+        #         raise RuntimeError("Failed to create B-spline curve from points")
+        #     print('bspline curve offset closed?:')
+        #     print(bspline_curve.IsClosed())
 
-            bspline_wire = make_wire([make_edge(bspline_curve)])
-            #..... TO HERE
+        #     bspline_wire = make_wire([make_edge(bspline_curve)])
+        #     #..... TO HERE
             
-            # intersector = Geom2dAPI_InterCurveCurve(top_spline_offset,bot_spline_offset)
-            # intersections = []
-            # if intersector.NbPoints() > 0:
-            #     for j in range(1, intersector.NbPoints() + 1):
-            #         intersections.append(intersector.Point(j))
-            #         # Geom2d_TrimmedCurve(top_spline_offset,)
-            # print(f'number of intersections {j}')
+        #     # intersector = Geom2dAPI_InterCurveCurve(top_spline_offset,bot_spline_offset)
+        #     # intersections = []
+        #     # if intersector.NbPoints() > 0:
+        #     #     for j in range(1, intersector.NbPoints() + 1):
+        #     #         intersections.append(intersector.Point(j))
+        #     #         # Geom2d_TrimmedCurve(top_spline_offset,)
+        #     # print(f'number of intersections {j}')
 
-            # intersection = intersections[0]
-            # param1_curve1, param2_curve1 = Geom2dAPI_InterCurveCurve.Parameters(top_spline_offset, intersection)
-            # param1_curve2, param2_curve2 = Geom2dAPI_InterCurveCurve.Parameters(bot_spline_offset, intersection)
+        #     # intersection = intersections[0]
+        #     # param1_curve1, param2_curve1 = Geom2dAPI_InterCurveCurve.Parameters(top_spline_offset, intersection)
+        #     # param1_curve2, param2_curve2 = Geom2dAPI_InterCurveCurve.Parameters(bot_spline_offset, intersection)
             
-            # trimmed_curve1 = Geom2d_TrimmedCurve(top_spline_offset, top_spline_offset.FirstParameter(), param1_curve1)
-            # trimmed_curve2 = Geom2d_TrimmedCurve(bot_spline_offset, bot_spline_offset.FirstParameter(), param1_curve2)
+        #     # trimmed_curve1 = Geom2d_TrimmedCurve(top_spline_offset, top_spline_offset.FirstParameter(), param1_curve1)
+        #     # trimmed_curve2 = Geom2d_TrimmedCurve(bot_spline_offset, bot_spline_offset.FirstParameter(), param1_curve2)
 
-            display.DisplayShape(top_spline.Curve(),color='RED')
-            display.DisplayShape(bot_spline.Curve(),color="YELLOW")
-            display.DisplayShape(top_spline_offset.Curve(), color="BLACK")
-            # display.DisplayShape(bot_spline_offset, color="Yellow")
-            # display.DisplayShape(trimmed_curve1, color="Black")
-            # display.DisplayShape(trimmed_curve2, color="Black")
-            # display.DisplayShape(offset_wire,color="RED")
-            # display.DisplayShape(bspline_wire,color='RED')
+        #     display.DisplayShape(top_spline.Curve(),color='RED')
+        #     display.DisplayShape(bot_spline.Curve(),color="YELLOW")
+        #     display.DisplayShape(top_spline_offset.Curve(), color="BLACK")
+        #     # display.DisplayShape(bot_spline_offset, color="Yellow")
+        #     # display.DisplayShape(trimmed_curve1, color="Black")
+        #     # display.DisplayShape(trimmed_curve2, color="Black")
+        #     # display.DisplayShape(offset_wire,color="RED")
+        #     # display.DisplayShape(bspline_wire,color='RED')
         
             
-            if front_spar_geometry is not None and rear_spar_geometry is not None:
-                front_spar_pts = xs[i][2].value
-                rear_spar_pts = xs[i][3].value
+        #     if front_spar_geometry is not None and rear_spar_geometry is not None:
+        #         front_spar_pts = xs[i][2].value
+        #         rear_spar_pts = xs[i][3].value
                 
-                #front spar
-                front_spar_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
-                for front_spar_pt in front_spar_pts:
-                    front_spar_pt_array.SetValue(pt_num, gp_Pnt2d(front_spar_pt[0], front_spar_pt[2]))
-                    pt_num +=1
-                front_spar_spline = Geom2dAPI_PointsToBSpline(front_spar_pt_array,bspline_order, bspline_order)
-                display.DisplayShape(front_spar_spline.Curve(),color="BLUE")
-                front_spar_offset=Geom2d_OffsetCurve(front_spar_spline.Curve(), -offset_spar)
-                display.DisplayShape(front_spar_offset,color="GREEN")
+        #         #front spar
+        #         front_spar_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
+        #         for front_spar_pt in front_spar_pts:
+        #             front_spar_pt_array.SetValue(pt_num, gp_Pnt2d(front_spar_pt[0], front_spar_pt[2]))
+        #             pt_num +=1
+        #         front_spar_spline = Geom2dAPI_PointsToBSpline(front_spar_pt_array,bspline_order, bspline_order)
+        #         display.DisplayShape(front_spar_spline.Curve(),color="BLUE")
+        #         front_spar_offset=Geom2d_OffsetCurve(front_spar_spline.Curve(), -offset_spar)
+        #         display.DisplayShape(front_spar_offset,color="GREEN")
 
-                #rear spar
-                rear_spar_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
-                for rear_spar_pt in rear_spar_pts:
-                    rear_spar_pt_array.SetValue(pt_num, gp_Pnt2d(rear_spar_pt[0], rear_spar_pt[2]))
-                    pt_num +=1
-                rear_spar_spline = Geom2dAPI_PointsToBSpline(rear_spar_pt_array,bspline_order, bspline_order)
-                display.DisplayShape(rear_spar_spline.Curve(),color="BLUE")
-                rear_spar_offset=Geom2d_OffsetCurve(rear_spar_spline.Curve(), -offset_spar)
-                display.DisplayShape(rear_spar_offset,color="GREEN")
+        #         #rear spar
+        #         rear_spar_pt_array = TColgp_Array1OfPnt2d(pt_num, pt_num+num_parametric-1)
+        #         for rear_spar_pt in rear_spar_pts:
+        #             rear_spar_pt_array.SetValue(pt_num, gp_Pnt2d(rear_spar_pt[0], rear_spar_pt[2]))
+        #             pt_num +=1
+        #         rear_spar_spline = Geom2dAPI_PointsToBSpline(rear_spar_pt_array,bspline_order, bspline_order)
+        #         display.DisplayShape(rear_spar_spline.Curve(),color="BLUE")
+        #         rear_spar_offset=Geom2d_OffsetCurve(rear_spar_spline.Curve(), -offset_spar)
+        #         display.DisplayShape(rear_spar_offset,color="GREEN")
             
-            display.FitAll()
-            # display.DisplayShape(bot_spline_offset, color="BLUE")
+        #     display.FitAll()
+        #     # display.DisplayShape(bot_spline_offset, color="BLUE")
             
-            start_display()
+        #     start_display()
 
-            from OCC.Core.BRep import BRep_Builder
-            from OCC.Core.TopoDS import TopoDS_Compound
-            from OCC.Core.STEPControl import STEPControl_Writer, STEPControl_AsIs
-            # from OCC.Core.TopExp import TopExp_Explorer
-            # from OCC.Core.TopAbs import TopAbs_EDGE
-            # from OCC.Core.TopoDS import topods_Edge
+        #     from OCC.Core.BRep import BRep_Builder
+        #     from OCC.Core.TopoDS import TopoDS_Compound
+        #     from OCC.Core.STEPControl import STEPControl_Writer, STEPControl_AsIs
+        #     # from OCC.Core.TopExp import TopExp_Explorer
+        #     # from OCC.Core.TopAbs import TopAbs_EDGE
+        #     # from OCC.Core.TopoDS import topods_Edge
 
-            # Create a compound to hold multiple wires
-            compound = TopoDS_Compound()
-            builder = BRep_Builder()
-            builder.MakeCompound(compound)
+        #     # Create a compound to hold multiple wires
+        #     compound = TopoDS_Compound()
+        #     builder = BRep_Builder()
+        #     builder.MakeCompound(compound)
 
-            # Add wires to the compound
-            builder.Add(compound, wire)
-            # builder.Add(compound, rear_spar_offset)
-            # builder.Add(compound, offset_wire)
-            # builder.Add(compound, combined_wire)
-            # builder.Add(compound, bspline_wire)
+        #     # Add wires to the compound
+        #     builder.Add(compound, wire)
+        #     # builder.Add(compound, rear_spar_offset)
+        #     # builder.Add(compound, offset_wire)
+        #     # builder.Add(compound, combined_wire)
+        #     # builder.Add(compound, bspline_wire)
             
-            # Initialize the STEP writer
-            step_writer = STEPControl_Writer()
+        #     # Initialize the STEP writer
+        #     step_writer = STEPControl_Writer()
 
-            # Add the wire to the STEP writer
-            step_writer.Transfer(compound, STEPControl_AsIs)
+        #     # Add the wire to the STEP writer
+        #     step_writer.Transfer(compound, STEPControl_AsIs)
 
-            # Write the file
-            step_writer.Write("OML.stp")
+        #     # Write the file
+        #     step_writer.Write("OML.stp")
 
-            compound1 = TopoDS_Compound()
-            builder1 = BRep_Builder()
-            builder1.MakeCompound(compound1)
+        #     compound1 = TopoDS_Compound()
+        #     builder1 = BRep_Builder()
+        #     builder1.MakeCompound(compound1)
 
-            # Add wires to the compound
-            builder1.Add(compound1, bspline_wire)
-            # builder.Add(compound, rear_spar_offset)
-            # builder1.Add(compound1, offset_wire)
-            # builder.Add(compound, combined_wire)
-            # builder.Add(compound, bspline_wire)
+        #     # Add wires to the compound
+        #     builder1.Add(compound1, bspline_wire)
+        #     # builder.Add(compound, rear_spar_offset)
+        #     # builder1.Add(compound1, offset_wire)
+        #     # builder.Add(compound, combined_wire)
+        #     # builder.Add(compound, bspline_wire)
             
-            # Initialize the STEP writer
-            step_writer1 = STEPControl_Writer()
+        #     # Initialize the STEP writer
+        #     step_writer1 = STEPControl_Writer()
 
-            # Add the wire to the STEP writer
-            step_writer1.Transfer(compound1, STEPControl_AsIs)
+        #     # Add the wire to the STEP writer
+        #     step_writer1.Transfer(compound1, STEPControl_AsIs)
 
-            # Write the file
-            step_writer1.Write("OML_offset.stp")
+        #     # Write the file
+        #     step_writer1.Write("OML_offset.stp")
 
 
-        gmsh.initialize()
+        # gmsh.initialize()
 
-        # gmsh.open("output.stp")
-        OML = gmsh.model.occ.import_shapes("OML.stp")
-        OML_tags = [item[1] for item in OML]
-        OML_offset=gmsh.model.occ.import_shapes("OML_offset.stp")
-        OML_offset_tags = [item[1] for item in OML_offset]
-        CL1 = gmsh.model.occ.add_curve_loop(OML_tags)
-        CL2 = gmsh.model.occ.add_curve_loop(OML_offset_tags)
-        gmsh.model.occ.add_plane_surface([CL1,CL2])
-        gmsh.model.occ.synchronize()
-        print(gmsh.model.get_entities(1))
-        gmsh.option.setNumber("Mesh.MeshSizeMin", offset_distance/2)
-        gmsh.option.setNumber("Mesh.MeshSizeMax", offset_distance/2)
-        gmsh.model.mesh.generate(2)
-        gmsh.fltk.run()
+        # # gmsh.open("output.stp")
+        # OML = gmsh.model.occ.import_shapes("OML.stp")
+        # OML_tags = [item[1] for item in OML]
+        # OML_offset=gmsh.model.occ.import_shapes("OML_offset.stp")
+        # OML_offset_tags = [item[1] for item in OML_offset]
+        # CL1 = gmsh.model.occ.add_curve_loop(OML_tags)
+        # CL2 = gmsh.model.occ.add_curve_loop(OML_offset_tags)
+        # gmsh.model.occ.add_plane_surface([CL1,CL2])
+        # gmsh.model.occ.synchronize()
+        # print(gmsh.model.get_entities(1))
+        # gmsh.option.setNumber("Mesh.MeshSizeMin", offset_distance/2)
+        # gmsh.option.setNumber("Mesh.MeshSizeMax", offset_distance/2)
+        # gmsh.model.mesh.generate(2)
+        # gmsh.fltk.run()
 
-        for i,pts in enumerate(xs):
-            top_pts = pts[0]
-            bot_pts = pts[1]
-            lc =0.001
-            top_pts_list=[]
-            bot_pts_list=[]
+        # for i,pts in enumerate(xs):
+        #     top_pts = pts[0]
+        #     bot_pts = pts[1]
+        #     lc =0.001
+        #     top_pts_list=[]
+        #     bot_pts_list=[]
 
-            #add upper and lower surface points
-            for top_pt in top_pts.value:
-                top_pts_list.append(gmsh.model.occ.add_point(top_pt[0],top_pt[1],top_pt[2]))
-            for bot_pt in bot_pts.value:
-                if np.equal(bot_pt,top_pts.value[0,:]).all():
-                    bot_pts_list.append(top_pts_list[0])
-                elif np.equal(bot_pt,top_pts.value[-1,:]).all():
-                    bot_pts_list.append(top_pts_list[-1])
-                else:
-                    bot_pts_list.append(gmsh.model.occ.add_point(bot_pt[0],bot_pt[1],bot_pt[2]))
+        #     #add upper and lower surface points
+        #     for top_pt in top_pts.value:
+        #         top_pts_list.append(gmsh.model.occ.add_point(top_pt[0],top_pt[1],top_pt[2]))
+        #     for bot_pt in bot_pts.value:
+        #         if np.equal(bot_pt,top_pts.value[0,:]).all():
+        #             bot_pts_list.append(top_pts_list[0])
+        #         elif np.equal(bot_pt,top_pts.value[-1,:]).all():
+        #             bot_pts_list.append(top_pts_list[-1])
+        #         else:
+        #             bot_pts_list.append(gmsh.model.occ.add_point(bot_pt[0],bot_pt[1],bot_pt[2]))
             
-            #check that xc_pts1 and 2 have the same start and end points
-            # if not np.equal(top_pts[0,:].value,bot_pts[-1,:].value).all():
-            if  top_pts_list[0] != bot_pts_list[-1]:
-                bot_pts_list.append(top_pts_list[0])
-            # if not np.equal(top_pts[-1,:].value,bot_pts[0,:].value).all():
-            if  top_pts_list[-1] != bot_pts_list[0]:
-                bot_pts_list.insert(0,top_pts_list[-1])
-                if rear_spar_geometry and front_spar_geometry is not None:
-                    insertion_pts[i,1]+=1
+        #     #check that xc_pts1 and 2 have the same start and end points
+        #     # if not np.equal(top_pts[0,:].value,bot_pts[-1,:].value).all():
+        #     if  top_pts_list[0] != bot_pts_list[-1]:
+        #         bot_pts_list.append(top_pts_list[0])
+        #     # if not np.equal(top_pts[-1,:].value,bot_pts[0,:].value).all():
+        #     if  top_pts_list[-1] != bot_pts_list[0]:
+        #         bot_pts_list.insert(0,top_pts_list[-1])
+        #         if rear_spar_geometry and front_spar_geometry is not None:
+        #             insertion_pts[i,1]+=1
                        
-            # add curve loop
-            # CL1 = gmsh.model.occ.add_curve_loop([spline1,spline2])
+        #     # add curve loop
+        #     # CL1 = gmsh.model.occ.add_curve_loop([spline1,spline2])
 
-            # try to offset, but if offset returns nothing, make a solid section
-            # CL2_tags_raw = gmsh.model.occ.offset_curve(CL1,.005)
+        #     # try to offset, but if offset returns nothing, make a solid section
+        #     # CL2_tags_raw = gmsh.model.occ.offset_curve(CL1,.005)
 
-            # gmsh.model.geo.add_plane_surface([spline])
-            # gmsh.model.occ.add_plane_surface([CL1])
-            # gmsh.model.occ.add_plane_surface([CL2])
+        #     # gmsh.model.geo.add_plane_surface([spline])
+        #     # gmsh.model.occ.add_plane_surface([CL1])
+        #     # gmsh.model.occ.add_plane_surface([CL2])
 
-            # #if the offset curve process fails, create a solid section
-            # try:
-            #     #need to get proper list of curves by removing dim part of each tuple
-            #     CL2_tags = [curve[1] for curve in CL2_tags_raw ]
-            #     CL2 = gmsh.model.occ.add_curve_loop(CL2_tags)
-            #     gmsh.model.occ.add_plane_surface([CL1,CL2])
-            # except:
-            #     gmsh.model.occ.add_plane_surface([CL1])
+        #     # #if the offset curve process fails, create a solid section
+        #     # try:
+        #     #     #need to get proper list of curves by removing dim part of each tuple
+        #     #     CL2_tags = [curve[1] for curve in CL2_tags_raw ]
+        #     #     CL2 = gmsh.model.occ.add_curve_loop(CL2_tags)
+        #     #     gmsh.model.occ.add_plane_surface([CL1,CL2])
+        #     # except:
+        #     #     gmsh.model.occ.add_plane_surface([CL1])
             
-            #if there are spars, add their geometry to the occ represenation
-            if rear_spar_geometry and front_spar_geometry is not None:
-                front_spar_pts = pts[2]
-                front_spar_pts_list=[]
-                for pt3 in front_spar_pts.value:
-                    front_spar_pts_list.append(gmsh.model.occ.add_point(pt3[0],pt3[1],pt3[2]))
-                front_spar_spline = gmsh.model.occ.add_spline(front_spar_pts_list)
+        #     #if there are spars, add their geometry to the occ represenation
+        #     if rear_spar_geometry and front_spar_geometry is not None:
+        #         front_spar_pts = pts[2]
+        #         front_spar_pts_list=[]
+        #         for pt3 in front_spar_pts.value:
+        #             front_spar_pts_list.append(gmsh.model.occ.add_point(pt3[0],pt3[1],pt3[2]))
+        #         front_spar_spline = gmsh.model.occ.add_spline(front_spar_pts_list)
                 
-                # top_front_curve_pts = top_pts_list[0:insertion_pts[i,0]]
-                # oml_points = top_pts_list + bot_pts_list[1:]
-                top_pts_list.insert(insertion_pts[i,0],front_spar_pts_list[0])
-                bot_pts_list.insert(insertion_pts[i,1],front_spar_pts_list[-1])
-                top_spline = gmsh.model.occ.add_spline(top_pts_list)
-                bot_spline = gmsh.model.occ.add_spline(bot_pts_list)
+        #         # top_front_curve_pts = top_pts_list[0:insertion_pts[i,0]]
+        #         # oml_points = top_pts_list + bot_pts_list[1:]
+        #         top_pts_list.insert(insertion_pts[i,0],front_spar_pts_list[0])
+        #         bot_pts_list.insert(insertion_pts[i,1],front_spar_pts_list[-1])
+        #         top_spline = gmsh.model.occ.add_spline(top_pts_list)
+        #         bot_spline = gmsh.model.occ.add_spline(bot_pts_list)
 
-                # output = gmsh.model.geo.split_curve(top_spline,[0,front_spar_pts_list[0]])
+        #         # output = gmsh.model.geo.split_curve(top_spline,[0,front_spar_pts_list[0]])
                 
-                # print(output)
-                # output = gmsh.model.occ.fragment([(1,top_spline)],[(1,front_spar_spline)],removeObject=False,removeTool=False)
-                # output = gmsh.model.occ.fragment([(1,bot_spline)],[(1,front_spar_spline)],removeObject=False,removeTool=False)
-                # output = gmsh.model.occ.cut([(1,top_spline)],[(0,front_spar_pts_list[0])],removeObject=True,removeTool=False)
-                # output2 = gmsh.model.occ.cut([(1,bot_spline)],[(0,front_spar_pts_list[-1])],removeObject=True,removeTool=False)
-                # output = gmsh.model.occ.cut([(1,bot_spline)],[(1,front_spar_spline)],removeObject=True,removeTool=False)
+        #         # print(output)
+        #         # output = gmsh.model.occ.fragment([(1,top_spline)],[(1,front_spar_spline)],removeObject=False,removeTool=False)
+        #         # output = gmsh.model.occ.fragment([(1,bot_spline)],[(1,front_spar_spline)],removeObject=False,removeTool=False)
+        #         # output = gmsh.model.occ.cut([(1,top_spline)],[(0,front_spar_pts_list[0])],removeObject=True,removeTool=False)
+        #         # output2 = gmsh.model.occ.cut([(1,bot_spline)],[(0,front_spar_pts_list[-1])],removeObject=True,removeTool=False)
+        #         # output = gmsh.model.occ.cut([(1,bot_spline)],[(1,front_spar_spline)],removeObject=True,removeTool=False)
 
-                # CL1 = gmsh.model.occ.add_curve_loop([front_spar_spline,5,6])
-                # CL2 = gmsh.model.occ.add_curve_loop([front_spar_spline,4,7])
-                CL3 = gmsh.model.occ.add_curve_loop([top_spline,bot_spline])
-                gmsh.model.occ.offset_curve(CL3,-0.00001)
-                # top_spar_curve_pts =
-                # top_rear_curve_pts = 
+        #         # CL1 = gmsh.model.occ.add_curve_loop([front_spar_spline,5,6])
+        #         # CL2 = gmsh.model.occ.add_curve_loop([front_spar_spline,4,7])
+        #         CL3 = gmsh.model.occ.add_curve_loop([top_spline,bot_spline])
+        #         gmsh.model.occ.offset_curve(CL3,-0.00001)
+        #         # top_spar_curve_pts =
+        #         # top_rear_curve_pts = 
 
-                # gmsh.model.occ.add_plane_surface([CL1])
+        #         # gmsh.model.occ.add_plane_surface([CL1])
 
-                # print(CL1)
-                # print(CL2_tags_raw)
-                # output = gmsh.model.occ.intersect(CL2_tags_raw,[(1,spline3)],False,False)
-                # output = gmsh.model.occ.fragment([(1,spline1),(1,spline2)],[(1,spline3)])
-                # output = gmsh.model.occ.cut([(1,spline1)],[(1,spline3)],removeObject=False,removeTool=False)
-                # output2 = gmsh.model.occ.cut([(1,spline2)],[(1,spline3)],removeObject=False,removeTool=False)
-                # print(output)
-                # print(output2)
-                # curve_tags = [curve[1] for curve in output[0]]
-                # curve_tags.append(spline3)
-                # FS_CL1 = gmsh.model.occ.add_curve_loop(curve_tags)
-                # CL2_tags_raw = gmsh.model.occ.offset_curve(FS_CL1,-.005)
+        #         # print(CL1)
+        #         # print(CL2_tags_raw)
+        #         # output = gmsh.model.occ.intersect(CL2_tags_raw,[(1,spline3)],False,False)
+        #         # output = gmsh.model.occ.fragment([(1,spline1),(1,spline2)],[(1,spline3)])
+        #         # output = gmsh.model.occ.cut([(1,spline1)],[(1,spline3)],removeObject=False,removeTool=False)
+        #         # output2 = gmsh.model.occ.cut([(1,spline2)],[(1,spline3)],removeObject=False,removeTool=False)
+        #         # print(output)
+        #         # print(output2)
+        #         # curve_tags = [curve[1] for curve in output[0]]
+        #         # curve_tags.append(spline3)
+        #         # FS_CL1 = gmsh.model.occ.add_curve_loop(curve_tags)
+        #         # CL2_tags_raw = gmsh.model.occ.offset_curve(FS_CL1,-.005)
                 
-                rear_spar_pts = pts[3]
-                pts4=[]
-                for pt4 in rear_spar_pts.value:
-                    pts4.append(gmsh.model.occ.add_point(pt4[0],pt4[1],pt4[2]))
-                rear_spar_spline = gmsh.model.occ.add_spline(pts4)
+        #         rear_spar_pts = pts[3]
+        #         pts4=[]
+        #         for pt4 in rear_spar_pts.value:
+        #             pts4.append(gmsh.model.occ.add_point(pt4[0],pt4[1],pt4[2]))
+        #         rear_spar_spline = gmsh.model.occ.add_spline(pts4)
 
 
 
-            else:
-                #add the upper and lower skins splines
-                top_spline = gmsh.model.occ.add_spline(top_pts_list)
-                bot_spline = gmsh.model.occ.add_spline(bot_pts_list)
+        #     else:
+        #         #add the upper and lower skins splines
+        #         top_spline = gmsh.model.occ.add_spline(top_pts_list)
+        #         bot_spline = gmsh.model.occ.add_spline(bot_pts_list)
 
-            # output = gmsh.model.occ.cut([(1,spline1)],[(1,spline3)],removeObject=True,removeTool=False)
-            # output2 = gmsh.model.occ.cut([(1,spline2)],[(1,spline3)],removeObject=True,removeTool=False)
-            # print(output)
-            # print(output2)
-            # print('pt lists')
-            # print(top_pts_list)
-            # print(bot_pts_list)
+        #     # output = gmsh.model.occ.cut([(1,spline1)],[(1,spline3)],removeObject=True,removeTool=False)
+        #     # output2 = gmsh.model.occ.cut([(1,spline2)],[(1,spline3)],removeObject=True,removeTool=False)
+        #     # print(output)
+        #     # print(output2)
+        #     # print('pt lists')
+        #     # print(top_pts_list)
+        #     # print(bot_pts_list)
 
-            # #this seems to work
-            # CL1 = gmsh.model.occ.add_curve_loop([spline1,spline2])
-            # gmsh.model.occ.add_plane_surface([CL1])
-            # CL2_tags_raw = gmsh.model.occ.offset_curve(CL1,-.005)
+        #     # #this seems to work
+        #     # CL1 = gmsh.model.occ.add_curve_loop([spline1,spline2])
+        #     # gmsh.model.occ.add_plane_surface([CL1])
+        #     # CL2_tags_raw = gmsh.model.occ.offset_curve(CL1,-.005)
             
-            # output = gmsh.model.occ.intersect([(1,spline1),(1,spline2)],[(1,spline3)],removeObject=False,removeTool=False)
-            # output = gmsh.model.occ.fragment([(1,spline1),(1,spline2)],[(1,spline3)])
-            # print(output)
+        #     # output = gmsh.model.occ.intersect([(1,spline1),(1,spline2)],[(1,spline3)],removeObject=False,removeTool=False)
+        #     # output = gmsh.model.occ.fragment([(1,spline1),(1,spline2)],[(1,spline3)])
+        #     # print(output)
 
-            gmsh.model.geo.synchronize()
+        #     gmsh.model.geo.synchronize()
 
-            gmsh.model.occ.synchronize()
+        #     gmsh.model.occ.synchronize()
 
-            gmsh.fltk.run()
+        #     gmsh.fltk.run()
 
-            gmsh.option.setNumber('Mesh.MeshSizeMin', 0.001)
-            gmsh.option.setNumber('Mesh.MeshSizeMax', 0.005)
+        #     gmsh.option.setNumber('Mesh.MeshSizeMin', 0.001)
+        #     gmsh.option.setNumber('Mesh.MeshSizeMax', 0.005)
 
-            gmsh.model.occ.synchronize()
+        #     gmsh.model.occ.synchronize()
 
-            gmsh.model.mesh.generate(2)
+        #     gmsh.model.mesh.generate(2)
 
-            gmsh.fltk.run()
+        #     gmsh.fltk.run()
 
-        gmsh.finalize()
+        # gmsh.finalize()
 
-        return
-    
-    def _get_intersection_idx(self,curve_pts,intersection_pt):
-        ''' find where an additional point should be store to add to the b-spline curve'''
-        insert_idx=np.argmin(np.linalg.norm(curve_pts - intersection_pt,axis=1))
-        #check if the insert idx is at the start or the end of the list
-        if insert_idx == 0:
-            insert_idx #unchanged
-        elif insert_idx == curve_pts.shape[0]-1:
-            insert_idx-=1
-        else:
-            #check surrounding points to determine which side of closest point to insert spar point
-            surrounding_indices = [insert_idx-1,insert_idx+1]
-            surrounding_to_insert = np.linalg.norm(curve_pts[surrounding_indices,:] - curve_pts[insert_idx,:],axis=1)
-            surrounding_to_spar = np.linalg.norm(curve_pts[surrounding_indices,:] - intersection_pt,axis=1)
-            if np.argmin(surrounding_to_insert-surrounding_to_spar) == 0:
-                insert_idx = insert_idx+1
-            elif np.argmin(surrounding_to_insert-surrounding_to_spar) == 1:
-                insert_idx=insert_idx
-        
-        return insert_idx
+        # return

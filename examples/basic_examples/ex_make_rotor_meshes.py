@@ -2,6 +2,7 @@
 import CADDEE_alpha as cd
 import csdl_alpha as csdl
 import numpy as np
+import lsdo_function_spaces as lfs
 
 recorder = csdl.Recorder(inline=True)
 recorder.start()
@@ -83,25 +84,38 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     # pusher_prop_blade_geometry.plot()
     pusher_prop_blade = cd.aircraft.components.Blade(AR=1,S_ref=1,
                                                      geometry=pusher_prop_blade_geometry)
-    top_surface_inds = [174]
-    bottom_surface_inds = [175]
+    top_index = 174
+    bot_index = 175
 
-    # pusher_prop_blade.create_beam_xs_meshes(top_index=174,bottom_index=175,num_spanwise=15)
+    top_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(top_index)])
 
-    top_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(i) for i in top_surface_inds])
-    bottom_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(i) for i in bottom_surface_inds])
+    bottom_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(bot_index)])
     front_spar_geometry,rear_spar_geometry = pusher_prop_blade.construct_cross_section(
         top_geometry,
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
     )
-    # pusher_prop_blade
-    # pusher_prop_blade.geometry.plot(opacity=0.5)
+
+    fxn_space = lfs.ConstantSpace(2) #change if you want variable 
+    blade_t_fxn_space = pusher_prop_blade.geometry.create_parallel_space(fxn_space)
+    # pusher_prop_blade.geometry.functions or .function_names
+    #TODO: need to assign different surfaces and handle tip/root caps (2 surfs each)
+    surf_indices = list(pusher_prop_blade.geometry.function_names.keys())
+    surf_thickneses=0.00005*np.ones((len(surf_indices),1))
+    coeffs,fxn_set = blade_t_fxn_space.initialize_function(1,surf_thickneses)
+
+    #define material
     E = csdl.Variable(value=69E9, name='E')
     G = csdl.Variable(value=26E9, name='G')
     density = csdl.Variable(value=2700, name='density')
     nu = csdl.Variable(value=0.33, name='nu')
-    aluminum = cd.materials.IsotropicMaterial(name='aluminum', density=density, E=E, nu=nu, G=G)
+    aluminum = cd.materials.IsotropicMaterial(name='Aluminum', density=density, E=E, nu=nu, G=G)
+
+    #set material for each surface
+    pusher_prop_blade.quantities.material_properties.set_material(
+        material=aluminum,
+        thickness=fxn_set)
+  
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
                                             front_spar_geometry=front_spar_geometry,
