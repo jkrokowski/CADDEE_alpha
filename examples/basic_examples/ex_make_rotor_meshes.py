@@ -101,7 +101,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     # pusher_prop_blade.geometry.functions or .function_names
     #TODO: need to assign different surfaces and handle tip/root caps (2 surfs each)
     surf_indices = list(pusher_prop_blade.geometry.function_names.keys())
-    surf_thickneses=0.00005*np.ones((len(surf_indices),1))
+    surf_thickneses=0.0005*np.ones((len(surf_indices),1))
     coeffs,fxn_set = blade_t_fxn_space.initialize_function(1,surf_thickneses)
 
     #define material
