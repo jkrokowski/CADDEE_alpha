@@ -148,7 +148,7 @@ class Blade(Wing):
                 # Set the wetted area
                 self.parameters.S_wet = self.quantities.surface_area
                 t2 = time.time()
-                # print("time for copmuting wetted area", t2-t1)
+                # print("time for computing wetted area", t2-t1)
 
                 t3 = time.time()
                 # Make the FFD block upon instantiation
@@ -309,7 +309,7 @@ class Blade(Wing):
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
         #number of parametric points to be evaluated for each surface
-        num_parametric = 200
+        num_parametric = 100
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric) # linear spacing doesn't perform well
         # np.append(0.5-np.logspace(-1,1,num=20)[::-1]/20,0.5)
@@ -321,86 +321,108 @@ class Blade(Wing):
         xs = []
 
         for i,u_coord in enumerate(u_coords):            
-
+            #TODO: need a reasonable way to detect cusps/intersections based on maximum possible design 
+            # thickness to prevent folds in surface and nasty meshing/spline construction issues.
+            print('mesh #'+str(i))
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top,num_parametric)
             
+            u_prime = self.geometry.evaluate(parametric_top, parametric_derivative_orders=(0,1), non_csdl=True)
+            u_double_prime = self.geometry.evaluate(parametric_top, parametric_derivative_orders=(0,2), non_csdl=True)
+            # roc =  np.abs((1+np.abs(u_prime)**(1/2))**(3/2)/u_double_prime)
+            roc = ((1+u_prime[:,0]**2)**(3/2))/u_double_prime[:,0]
+            print('min top roc:')
+            print(np.min(np.abs(roc)))
+            # print(np.min(np.abs(((1+u_prime[:,1]**2)**(3/2))/u_double_prime[:,1])))
+            print(np.min(np.abs(((1+u_prime[:,2]**2)**(3/2))/u_double_prime[:,2])))
+
             parametric_bot = [(bot_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
             bot_pts,bot_pts_offset = self._get_pts_and_offset_pts(parametric_bot,num_parametric)
-          
+            
+            u_prime = self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,1), non_csdl=True)
+            u_double_prime = self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,2), non_csdl=True)
+            
+            # u_prime = ( self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,1), non_csdl=True) +
+            #             self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(1,0), non_csdl=True) )
+            # u_double_prime = ( self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,2), non_csdl=True) +
+            #                    self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(2,0), non_csdl=True) )
+            roc = ((1+u_prime[:,0]**2)**(3/2))/u_double_prime[:,0]
+            print('min bot roc:')
+            print(np.min(np.abs(roc)))
+            # print(np.min(np.abs(((1+u_prime[:,1]**2)**(3/2))/u_double_prime[:,1])))
+            print(np.min(np.abs(((1+u_prime[:,2]**2)**(3/2))/u_double_prime[:,2])))
+            
+            
             top_surf_name='top_skin_xs_'+str(i)
-            top_xs_surf_geometry = self._fit_xs_surface(top_pts,
-                                                    top_pts_offset,
-                                                    top_surf_name,
-                                                    num_parametric,
-                                                    v_coords)
+            # top_xs_surf_geometry = self._fit_xs_surface(top_pts,
+            #                                         top_pts_offset,
+            #                                         top_surf_name,
+            #                                         num_parametric,
+            #                                         v_coords)
 
-            bot_surf_name='bot_skin_xs_'+str(i)
-            bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
-                                                    bot_pts_offset,
-                                                    bot_surf_name,
-                                                    num_parametric,
-                                                    v_coords)
+            # bot_surf_name='bot_skin_xs_'+str(i)
+            # bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
+            #                                         bot_pts_offset,
+            #                                         bot_surf_name,
+            #                                         num_parametric,
+            #                                         v_coords)
 
-            if i ==9:
-                print()
+            # top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
 
-            top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
-
-            bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
+            # bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
             
-            #given a gmsh .msh and geometry component
-            #return node values evaluated on surface, parametric coords and connectivity
-            top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
-                                      component=top_xs_surf_geometry,
-                                      plot=False)
+            # #given a gmsh .msh and geometry component
+            # #return node values evaluated on surface, parametric coords and connectivity
+            # top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
+            #                           component=top_xs_surf_geometry,
+            #                           plot=True)
             
-            bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
-                                      component=bot_xs_surf_geometry,
-                                      plot=False)
+            # bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
+            #                           component=bot_xs_surf_geometry,
+            #                           plot=True)
             
     def _get_pts_and_offset_pts(self,parametric_pts,num_parametric):
-                pts = self.geometry.evaluate(parametric_pts, plot=False)
-                normals = self.geometry.evaluate_normals(parametric_pts,plot=False)
-                thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_pts)
+        pts = self.geometry.evaluate(parametric_pts, plot=False)
+        normals = self.geometry.evaluate_normals(parametric_pts,plot=False)
+        thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_pts)
 
-                #perfom adjustment of out of plane normal
-                offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
+        #perfom adjustment of out of plane normal
+        offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
 
-                normals_inplane = (normals@(np.array([[1,0,0],[0,0,1]])).T)
+        normals_inplane = (normals@(np.array([[1,0,0],[0,0,1]])).T)
 
-                #broadcasting vector to matrix not working well in csdl, so have to use expand
-                offsets_inplane = normals_inplane* csdl.expand(offset_thicknesses,
-                                                                    normals_inplane.shape,
-                                                                    'i->ij')
-                offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_parametric,1)),
-                                                np.zeros((num_parametric,1)),
-                                                offsets_inplane[:,1].value.reshape((num_parametric,1))],
-                                                axis=1)
-                offset_pts = ( pts + offsets)
-                return pts,offset_pts
+        #broadcasting vector to matrix not working well in csdl, so have to use expand
+        offsets_inplane = normals_inplane* csdl.expand(offset_thicknesses,
+                                                            normals_inplane.shape,
+                                                            'i->ij')
+        offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_parametric,1)),
+                                        np.zeros((num_parametric,1)),
+                                        offsets_inplane[:,1].value.reshape((num_parametric,1))],
+                                        axis=1)
+        offset_pts = ( pts + offsets)
+        return pts,offset_pts
     
     def _fit_xs_surface(self,pts,offset_pts,xs_surf_name,num_parametric,v_coords):
-                num_through_thickness = 2 #this is the number of ctl pts to fit the surface
-                # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
-                inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//4,num_through_thickness))
-                # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
-                stacked_pts = np.concatenate([pts.value,offset_pts.value])
-                pts_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.zeros((v_coords.shape[0],1))],axis=1)
-                pts_offset_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.ones((v_coords.shape[0],1))],axis=1)
-                parametric_coords = np.concatenate([pts_parametric,pts_offset_parametric],axis=0)
-                
-                surf_xs_coeffs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
-                surf_xs = lfs.Function(inplane_space,surf_xs_coeffs)
-                
-                self._add_geometry(surf_index=self.xs_surf_index,
-                                function=surf_xs,
-                                name=xs_surf_name)
-                self.xs_surf_index+=1
+        num_through_thickness = 2 #this is the number of ctl pts to fit the surface
+        # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
+        inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//4,num_through_thickness))
+        # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
+        stacked_pts = np.concatenate([pts.value,offset_pts.value])
+        pts_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.zeros((v_coords.shape[0],1))],axis=1)
+        pts_offset_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.ones((v_coords.shape[0],1))],axis=1)
+        parametric_coords = np.concatenate([pts_parametric,pts_offset_parametric],axis=0)
+        
+        surf_xs_coeffs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
+        surf_xs = lfs.Function(inplane_space,surf_xs_coeffs)
+        
+        self._add_geometry(surf_index=self.xs_surf_index,
+                        function=surf_xs,
+                        name=xs_surf_name)
+        self.xs_surf_index+=1
 
-                xs_surf_geometry = self.create_subgeometry(search_names=xs_surf_name)
+        xs_surf_geometry = self.create_subgeometry(search_names=xs_surf_name)
 
-                return xs_surf_geometry
+        return xs_surf_geometry
     
 
     def _mesh_curve_and_offset(self,pts,offset_pts,name='blade_xs'):
@@ -429,8 +451,8 @@ class Blade(Wing):
         gmsh.model.occ.synchronize()
         
         #need to have a more intelligent way of selecting mesh size
-        # gmsh.option.setNumber("Mesh.MeshSizeMin", skin_thickness*5)
-        # gmsh.option.setNumber("Mesh.MeshSizeMax", skin_thickness*10)
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.001)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", 0.005)
         gmsh.option.set_number("Mesh.SaveAll", 2)
         gmsh.model.mesh.generate(2)
 
@@ -443,6 +465,10 @@ class Blade(Wing):
 
         return  filename
     
+    def roc(self,geom, point):
+        u_prime = geom.evaluate(point, parametric_derivative_orders=(0,1), non_csdl=True)[:,0]
+        u_double_prime = geom.evaluate(point, parametric_derivative_orders=(0,2), non_csdl=True)[:,0]
+        return np.abs(1+np.abs(u_prime)**(1/2)/u_double_prime)
 
     def _get_intersection_idx(self,curve_pts,intersection_pt):
         ''' find where an additional point should be store to add to the b-spline curve'''
