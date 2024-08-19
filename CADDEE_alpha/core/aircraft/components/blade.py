@@ -309,7 +309,7 @@ class Blade(Wing):
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
         #number of parametric points to be evaluated for each surface
-        num_parametric = 100
+        num_parametric = 500
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric) # linear spacing doesn't perform well
         # np.append(0.5-np.logspace(-1,1,num=20)[::-1]/20,0.5)
@@ -321,66 +321,85 @@ class Blade(Wing):
         xs = []
 
         for i,u_coord in enumerate(u_coords):            
-            #TODO: need a reasonable way to detect cusps/intersections based on maximum possible design 
-            # thickness to prevent folds in surface and nasty meshing/spline construction issues.
             print('mesh #'+str(i))
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top,num_parametric)
             
-            u_prime = self.geometry.evaluate(parametric_top, parametric_derivative_orders=(0,1), non_csdl=True)
-            u_double_prime = self.geometry.evaluate(parametric_top, parametric_derivative_orders=(0,2), non_csdl=True)
-            # roc =  np.abs((1+np.abs(u_prime)**(1/2))**(3/2)/u_double_prime)
-            roc = ((1+u_prime[:,0]**2)**(3/2))/u_double_prime[:,0]
+            roc_top = self._get_roc(parametric_top)
+
             print('min top roc:')
-            print(np.min(np.abs(roc)))
-            # print(np.min(np.abs(((1+u_prime[:,1]**2)**(3/2))/u_double_prime[:,1])))
-            print(np.min(np.abs(((1+u_prime[:,2]**2)**(3/2))/u_double_prime[:,2])))
+            print(np.min(np.abs(roc_top)))
+            #IF the Radius of curvature exceeds the maximum design thickness, purge the corresponding pts from the offset pts
+            # self._get_problematic_offset_pts()
+
+            #evaluate thicknesses for comparison to radius of curvature
+            #TODO: swap this for the design variable upper limit:
+            thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_top).value
+
+            #get indices where radius of curvature does not exceed thickness
+            valid_top_offset_pts_indices = (np.abs(roc_top) >= thicknesses).nonzero()
+            #restrict offset pts to the valid pts:
+            top_pts_offset=top_pts_offset[list(valid_top_offset_pts_indices[0]),:]
+            print("num top pts="+str(top_pts.shape[0])+', num offset pts:'+str(top_pts_offset.shape[0]))
 
             parametric_bot = [(bot_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
             bot_pts,bot_pts_offset = self._get_pts_and_offset_pts(parametric_bot,num_parametric)
             
-            u_prime = self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,1), non_csdl=True)
-            u_double_prime = self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,2), non_csdl=True)
-            
-            # u_prime = ( self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,1), non_csdl=True) +
-            #             self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(1,0), non_csdl=True) )
-            # u_double_prime = ( self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,2), non_csdl=True) +
-            #                    self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(2,0), non_csdl=True) )
-            roc = ((1+u_prime[:,0]**2)**(3/2))/u_double_prime[:,0]
+            roc_bot = self._get_roc(parametric_bot)
             print('min bot roc:')
-            print(np.min(np.abs(roc)))
-            # print(np.min(np.abs(((1+u_prime[:,1]**2)**(3/2))/u_double_prime[:,1])))
-            print(np.min(np.abs(((1+u_prime[:,2]**2)**(3/2))/u_double_prime[:,2])))
-            
-            
+            print(np.min(np.abs(roc_bot)))
+
+            #evaluate thicknesses for comparison to radius of curvature
+            thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_bot).value
+            #condition to check whether offset pt should be included or not:
+            #get indices where radius of curvature does not exceed thickness
+            valid_bot_offset_pts_indices = (np.abs(roc_bot) >= thicknesses).nonzero()
+            #restrict to the valid pts:
+            bot_pts_offset=bot_pts_offset[list(valid_bot_offset_pts_indices[0]),:]
+            # top_pts_offset=top_pts_offset[valid_top_offset_pts_indices]
+            print("num bot pts="+str(bot_pts.shape[0])+', num offset pts:'+str(bot_pts_offset.shape[0]))
+
             top_surf_name='top_skin_xs_'+str(i)
-            # top_xs_surf_geometry = self._fit_xs_surface(top_pts,
-            #                                         top_pts_offset,
-            #                                         top_surf_name,
-            #                                         num_parametric,
-            #                                         v_coords)
+            top_xs_surf_geometry = self._fit_xs_surface(top_pts,
+                                                    top_pts_offset,
+                                                    top_surf_name,
+                                                    num_parametric)
 
-            # bot_surf_name='bot_skin_xs_'+str(i)
-            # bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
-            #                                         bot_pts_offset,
-            #                                         bot_surf_name,
-            #                                         num_parametric,
-            #                                         v_coords)
+            bot_surf_name='bot_skin_xs_'+str(i)
+            bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
+                                                    bot_pts_offset,
+                                                    bot_surf_name,
+                                                    num_parametric)
 
-            # top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
+            top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
 
-            # bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
+            bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
             
-            # #given a gmsh .msh and geometry component
-            # #return node values evaluated on surface, parametric coords and connectivity
-            # top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
-            #                           component=top_xs_surf_geometry,
-            #                           plot=True)
+            #given a gmsh .msh and geometry component
+            #return node values evaluated on surface, parametric coords and connectivity
+            top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
+                                      component=top_xs_surf_geometry,
+                                      plot=True)
             
-            # bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
-            #                           component=bot_xs_surf_geometry,
-            #                           plot=True)
+            bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
+                                      component=bot_xs_surf_geometry,
+                                      plot=True)
             
+            self.geometry.plot(opacity=0.5)
+
+
+    def _get_roc(self,parametric_pts):
+        '''gets the radius of curvature in the plane of a parametric 
+        direction at specified parametric pts '''
+        v_prime = self.geometry.evaluate(parametric_pts, parametric_derivative_orders=(0,1), non_csdl=True)
+        v_double_prime = self.geometry.evaluate(parametric_pts, parametric_derivative_orders=(0,2), non_csdl=True)
+        #TOTAL HACK: if either parametric derivative value is 0, set to some small number to prevent divide by zero
+        
+        roc = ( ((v_prime[:,0]**2 + v_prime[:,2]**2)**(3/2)) /
+                   (v_prime[:,0]*v_double_prime[:,2] - v_prime[:,2]*v_double_prime[:,0] ) )
+        return roc
+         
+                
     def _get_pts_and_offset_pts(self,parametric_pts,num_parametric):
         pts = self.geometry.evaluate(parametric_pts, plot=False)
         normals = self.geometry.evaluate_normals(parametric_pts,plot=False)
@@ -402,14 +421,16 @@ class Blade(Wing):
         offset_pts = ( pts + offsets)
         return pts,offset_pts
     
-    def _fit_xs_surface(self,pts,offset_pts,xs_surf_name,num_parametric,v_coords):
+    def _fit_xs_surface(self,pts,offset_pts,xs_surf_name,num_parametric):
         num_through_thickness = 2 #this is the number of ctl pts to fit the surface
         # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
         inplane_space = lfs.BSplineSpace(2,(3,1),(num_parametric//4,num_through_thickness))
         # stacked_pts = csdl.Variable(value=np.concatenate([top_pts[:,[0,2]].value,top_pts_offset.value]))
         stacked_pts = np.concatenate([pts.value,offset_pts.value])
-        pts_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.zeros((v_coords.shape[0],1))],axis=1)
-        pts_offset_parametric = np.concatenate([v_coords.reshape((v_coords.shape[0],1)),np.ones((v_coords.shape[0],1))],axis=1)
+        v_coords_pts = np.linspace(0,1,pts.shape[0])
+        v_coords_pts_offset = np.linspace(0,1,offset_pts.shape[0])
+        pts_parametric = np.concatenate([v_coords_pts.reshape((v_coords_pts.shape[0],1)),np.zeros((v_coords_pts.shape[0],1))],axis=1)
+        pts_offset_parametric = np.concatenate([v_coords_pts_offset.reshape((v_coords_pts_offset.shape[0],1)),np.ones((v_coords_pts_offset.shape[0],1))],axis=1)
         parametric_coords = np.concatenate([pts_parametric,pts_offset_parametric],axis=0)
         
         surf_xs_coeffs = inplane_space.fit(values=stacked_pts,parametric_coordinates=parametric_coords)
@@ -431,8 +452,10 @@ class Blade(Wing):
         #add upper and lower surface points
         pts_list = []
         pts_offset_list = []
-        for pt,offset_pt in zip(pts.value,offset_pts.value):
+        #need to loop through individually,as pts and offset_pts may be different lengths
+        for pt in pts.value:
             pts_list.append(gmsh.model.occ.add_point(pt[0],pt[1],pt[2]))
+        for offset_pt in offset_pts.value:
             pts_offset_list.append(gmsh.model.occ.add_point(offset_pt[0],offset_pt[1],offset_pt[2]))
 
         spline = gmsh.model.occ.add_spline(pts_list)
@@ -1076,3 +1099,19 @@ class Blade(Wing):
             # top_pts_offset= ( top_pts +
             #                  top_pts_offsets)
             
+
+            #ROC STUFF:
+            # u_prime = self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,1), non_csdl=True)
+            # u_double_prime = self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,2), non_csdl=True)
+            
+            # u_prime = ( self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,1), non_csdl=True) +
+            #             self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(1,0), non_csdl=True) )
+            # u_double_prime = ( self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(0,2), non_csdl=True) +
+            #                    self.geometry.evaluate(parametric_bot, parametric_derivative_orders=(2,0), non_csdl=True) )
+            # roc = ((1+u_prime[:,0]**2)**(3/2))/u_double_prime[:,0]
+            # print('min bot roc:')
+            # print(np.min(np.abs(roc)))
+            # # print(np.min(np.abs(((1+u_prime[:,1]**2)**(3/2))/u_double_prime[:,1])))
+            # print(np.min(np.abs(((1+u_prime[:,2]**2)**(3/2))/u_double_prime[:,2])))
+            # roc_bot = ( ((u_prime[:,0]**2 + u_prime[:,2]**2)**(3/2)) /
+            #        (u_prime[:,0]*u_double_prime[:,2] - u_prime[:,2]*u_double_prime[:,0] ) )

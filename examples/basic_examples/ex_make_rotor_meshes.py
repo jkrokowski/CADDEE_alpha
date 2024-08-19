@@ -81,7 +81,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     # pusher_prop.geometry.plot()
 
     pusher_prop_blade_geometry = pusher_prop.create_subgeometry(search_names=["Rotor_9_blades, 0"])
-    # pusher_prop_blade_geometry.plot()
+    pusher_prop_blade_geometry.plot(opacity=0.5)
     pusher_prop_blade = cd.aircraft.components.Blade(AR=1,S_ref=1,
                                                      geometry=pusher_prop_blade_geometry)
     top_index = 174
@@ -95,13 +95,14 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
     )
+    pusher_prop_blade.geometry.plot(opacity=0.5)
 
     fxn_space = lfs.ConstantSpace(2) #change if you want variable 
     blade_t_fxn_space = pusher_prop_blade.geometry.create_parallel_space(fxn_space)
     # pusher_prop_blade.geometry.functions or .function_names
     #TODO: need to assign different surfaces and handle tip/root caps (2 surfs each)
     surf_indices = list(pusher_prop_blade.geometry.function_names.keys())
-    surf_thickneses=0.005*np.ones((len(surf_indices),1))
+    surf_thickneses=0.0025*np.ones((len(surf_indices),1))
     coeffs,fxn_set = blade_t_fxn_space.initialize_function(1,surf_thickneses)
 
     #define material
