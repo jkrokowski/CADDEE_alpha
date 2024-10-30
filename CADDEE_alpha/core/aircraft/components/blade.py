@@ -379,13 +379,13 @@ class Blade(Wing):
             #return node values evaluated on surface, parametric coords and connectivity
             top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
                                       component=top_xs_surf_geometry,
-                                      plot=True)
+                                      plot=False)
             
             bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
                                       component=bot_xs_surf_geometry,
-                                      plot=True)
+                                      plot=False)
             
-            self.geometry.plot(opacity=0.5)
+        self.geometry.plot(opacity=0.5)
 
 
     def _get_roc(self,parametric_pts):
