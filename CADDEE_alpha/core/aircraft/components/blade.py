@@ -14,6 +14,8 @@ from typing import Union
 import lsdo_geo as lg
 import gmsh
 import os
+import matplotlib.pyplot as plt
+
 path = os.getcwd()
 
 
@@ -174,7 +176,7 @@ class Blade(Wing):
             self._dependent_geometry_points = [] # {'parametric_points', 'function_space', 'fitting_coords', 'mirror'}
             self._base_geometry = self.geometry.copy()
     
-    def construct_cross_section(
+    def construct_internal_structure(
             self,
             top_geometry:lg.Geometry,
             bottom_geometry:lg.Geometry,
@@ -287,6 +289,7 @@ class Blade(Wing):
         front_spar_geometry = self.create_subgeometry(search_names=front_spar_name)
         rear_spar_geometry = self.create_subgeometry(search_names=rear_spar_name)
 
+        #TODO: return a set of internal geometries
         return front_spar_geometry,rear_spar_geometry
     
     def create_beam_xs_meshes(
@@ -309,7 +312,7 @@ class Blade(Wing):
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
         #number of parametric points to be evaluated for each surface
-        num_parametric = 500
+        num_parametric = 1000
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric) # linear spacing doesn't perform well
         # np.append(0.5-np.logspace(-1,1,num=20)[::-1]/20,0.5)
@@ -358,32 +361,62 @@ class Blade(Wing):
             bot_pts_offset=bot_pts_offset[list(valid_bot_offset_pts_indices[0]),:]
             # top_pts_offset=top_pts_offset[valid_top_offset_pts_indices]
             print("num bot pts="+str(bot_pts.shape[0])+', num offset pts:'+str(bot_pts_offset.shape[0]))
+            
+            #combine skin surface points into a single array
+            if np.isclose(bot_pts[0,:].value, top_pts[-1,:].value).all():
+                skin_pts = csdl.concatenate([top_pts,bot_pts[1:,:]])
+            else:
+                skin_pts = csdl.concatenate([top_pts,bot_pts])
 
-            top_surf_name='top_skin_xs_'+str(i)
-            top_xs_surf_geometry = self._fit_xs_surface(top_pts,
-                                                    top_pts_offset,
-                                                    top_surf_name,
+            #same for offset pts
+            if np.isclose(bot_pts_offset[0,:].value, top_pts_offset[-1,:].value).all():
+                skin_offset_pts = csdl.concatenate([top_pts_offset,bot_pts_offset[1:,:]])
+            else:
+                skin_offset_pts = csdl.concatenate([top_pts_offset,bot_pts_offset])
+            print("num skin pts="+str(skin_pts.shape[0])+', num offset pts:'+str(skin_offset_pts.shape[0]))
+
+            #fit a single surface to the outer skin
+            skin_surf_name='skin_'+str(i)
+            print("skin pts:")
+            print(skin_pts.value)
+            skin_surf_geometry = self._fit_xs_surface(skin_pts,
+                                                    skin_offset_pts,
+                                                    skin_surf_name,
                                                     num_parametric)
+            skin_surf_geometry.plot()
+            skin_mesh = self._mesh_curve_and_offset(skin_pts,
+                                                    skin_offset_pts,
+                                                    name=skin_surf_geometry,
+                                                    plot=True)
+            skin_output = cd.mesh_utils.import_mesh(file=skin_mesh,
+                                      component=skin_surf_geometry,
+                                      plot=True)
+            
+            # top_surf_name='top_skin_xs_'+str(i)
+            # top_xs_surf_geometry = self._fit_xs_surface(top_pts,
+            #                                         top_pts_offset,
+            #                                         top_surf_name,
+            #                                         num_parametric)
+            # top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
 
-            bot_surf_name='bot_skin_xs_'+str(i)
-            bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
-                                                    bot_pts_offset,
-                                                    bot_surf_name,
-                                                    num_parametric)
+            # bot_surf_name='bot_skin_xs_'+str(i)
+            # bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
+            #                                         bot_pts_offset,
+            #                                         bot_surf_name,
+            #                                         num_parametric)
+            # bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
 
-            top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
 
-            bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
             
             #given a gmsh .msh and geometry component
             #return node values evaluated on surface, parametric coords and connectivity
-            top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
-                                      component=top_xs_surf_geometry,
-                                      plot=False)
+            # top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
+            #                           component=top_xs_surf_geometry,
+            #                           plot=True)
             
-            bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
-                                      component=bot_xs_surf_geometry,
-                                      plot=False)
+            # bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
+            #                           component=bot_xs_surf_geometry,
+            #                           plot=True)
             
         self.geometry.plot(opacity=0.5)
 
@@ -446,7 +479,7 @@ class Blade(Wing):
         return xs_surf_geometry
     
 
-    def _mesh_curve_and_offset(self,pts,offset_pts,name='blade_xs'):
+    def _mesh_curve_and_offset(self,pts,offset_pts,name='blade_xs',plot=False):
         ''' returns a mesh of a thickened curve in the plane'''
         gmsh.initialize()
         #add upper and lower surface points
@@ -458,8 +491,9 @@ class Blade(Wing):
         for offset_pt in offset_pts.value:
             pts_offset_list.append(gmsh.model.occ.add_point(offset_pt[0],offset_pt[1],offset_pt[2]))
 
-        spline = gmsh.model.occ.add_spline(pts_list)
-        spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
+        #edit the 
+        spline = gmsh.model.occ.add_spline(pts_list[:-1])
+        spline_offset = gmsh.model.occ.add_spline(pts_offset_list[:-1])
         line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
         line2 = gmsh.model.occ.add_line(pts_offset_list[-1],pts_list[-1])
         
@@ -478,8 +512,8 @@ class Blade(Wing):
         gmsh.option.setNumber("Mesh.MeshSizeMax", 0.005)
         gmsh.option.set_number("Mesh.SaveAll", 2)
         gmsh.model.mesh.generate(2)
-
-        # gmsh.fltk.run()
+        if plot:
+            gmsh.fltk.run()
 
         filename = "stored_files/"+ name + '.msh'
         gmsh.write(filename)
@@ -513,6 +547,75 @@ class Blade(Wing):
         
         return insert_idx
 
+    def line_intersection(p1, p2, p3, p4):
+        """Computes the intersection point of segments (p1, p2) and (p3, p4), if it exists."""
+        x1, y1 = p1
+        x2, y2 = p2
+        x3, y3 = p3
+        x4, y4 = p4
+
+        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if abs(denom) < 1e-10:  # Parallel or coincident lines
+            return None
+
+        px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
+        py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
+
+        if (
+            min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2)
+            and min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)
+        ):
+            return np.array([px, py])
+        return None
+
+    def find_self_intersections(self,points):
+        """Finds exact intersection points and their indices."""
+        intersections = []
+
+        for i in range(len(points) - 1):
+            p1, p2 = points[i], points[i + 1]
+            for j in range(i + 2, len(points) - 1):  # Avoid adjacent segments
+                p3, p4 = points[j], points[j + 1]
+                inter = self.line_intersection(p1, p2, p3, p4)
+                if inter is not None:
+                    intersections.append((i + 1, j, inter))  # Store indices and intersection point
+
+        if not intersections:
+            return None
+
+        first_idx, last_idx, first_pt = min(intersections, key=lambda x: x[0])
+        _, _, last_pt = max(intersections, key=lambda x: x[1])
+
+        return first_idx, last_idx, first_pt, last_pt
+
+    def trim_polyline(self,points):
+        """Trims the polyline to start and end at exact intersection points."""
+        result = self.find_self_intersections(points)
+        if result is None:
+            return points  # No trimming needed
+
+        first_idx, last_idx, first_pt, last_pt = result
+        return np.vstack([first_pt, points[first_idx:last_idx + 1], last_pt])
+
+    def plot_polylines(original, trimmed, first_pt, last_pt):
+        """Plots the original and trimmed polylines for visualization."""
+        plt.figure(figsize=(8, 6))
+
+        # Plot original polyline
+        plt.plot(original[:, 0], original[:, 1], 'b-o', label="Original Polyline", alpha=0.5)
+
+        # Plot trimmed polyline
+        plt.plot(trimmed[:, 0], trimmed[:, 1], 'r-o', label="Trimmed Polyline", linewidth=2)
+
+        # Mark intersection points
+        plt.scatter([first_pt[0], last_pt[0]], [first_pt[1], last_pt[1]], color='green', s=100, label="Intersections", zorder=3)
+
+        plt.xlabel("X")
+        plt.ylabel("Y")
+        plt.legend()
+        plt.grid(True)
+        plt.title("Polyline Trimming with Exact Intersections")
+        plt.show()
             # top_surf_xs.project
             # in progress
             # stacked_pts = #top_pts and top_pts_offset (make a variable )

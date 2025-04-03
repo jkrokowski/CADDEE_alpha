@@ -91,7 +91,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     top_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(top_index)])
 
     bottom_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(bot_index)])
-    front_spar_geometry,rear_spar_geometry = pusher_prop_blade.construct_cross_section(
+    front_spar_geometry,rear_spar_geometry = pusher_prop_blade.construct_internal_structure(
         top_geometry,
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
@@ -120,10 +120,20 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
   
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
-                                            front_spar_geometry=front_spar_geometry,
+                                            front_spar_geometry=front_spar_geometry, 
                                             rear_spar_geometry=rear_spar_geometry,
                                             num_spanwise=10)
     
+    #make plot of upper and lower skin surfaces for illustrative purposes:
+    for i in range(10):
+        pusher_prop_blade_xs_ts = pusher_prop_blade.create_subgeometry(search_names=["top_skin_xs_"+str(i)])
+
+        pusher_prop_blade_xs_bs = pusher_prop_blade.create_subgeometry(search_names=["bot_skin_xs_"+str(i)])
+        
+        xs_bs_plot=pusher_prop_blade_xs_bs.plot(color=000000)
+
+        pusher_prop_blade_xs_ts.plot(additional_plotting_elements=[xs_bs_plot],opacity=0.5)
+
     aluminum_albatross = ALBATROSS.material.caddee_material_to_albatross(aluminum)
 
     meshes = []
