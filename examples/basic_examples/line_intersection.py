@@ -2,87 +2,70 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def line_intersection(p1, p2, p3, p4):
-    """Computes the intersection point of segments (p1, p2) and (p3, p4), if it exists."""
+    """Computes intersection point of line segments (p1,p2) and (p3,p4), if any."""
     x1, y1 = p1
     x2, y2 = p2
     x3, y3 = p3
     x4, y4 = p4
 
-    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-    if abs(denom) < 1e-10:  # Parallel or coincident lines
-        return None
+    denom = (x1 - x2)*(y3 - y4) - (y1 - y2)*(x3 - x4)
+    if abs(denom) < 1e-10:
+        return None  # Parallel lines
 
-    px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
-    py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
+    px = ((x1*y2 - y1*x2)*(x3 - x4) - (x1 - x2)*(x3*y4 - y3*x4)) / denom
+    py = ((x1*y2 - y1*x2)*(y3 - y4) - (y1 - y2)*(x3*y4 - y3*x4)) / denom
+    point = np.array([px, py])
 
-    if (
-        min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2)
-        and min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)
-    ):
-        return np.array([px, py])
+    # Check if intersection is within both segments
+    if (min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2) and
+        min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)):
+        return point
     return None
 
-def find_self_intersections(points):
-    """Finds exact intersection points and their indices."""
-    intersections = []
-
-    for i in range(len(points) - 1):
-        p1, p2 = points[i], points[i + 1]
-        for j in range(i + 2, len(points) - 1):  # Avoid adjacent segments
-            p3, p4 = points[j], points[j + 1]
+def find_intersection(poly1, poly2):
+    """Finds first intersection point and corresponding indices."""
+    for i in range(len(poly1) - 1):
+        p1, p2 = poly1[i], poly1[i + 1]
+        for j in range(len(poly2) - 1):
+            p3, p4 = poly2[j], poly2[j + 1]
             inter = line_intersection(p1, p2, p3, p4)
             if inter is not None:
-                intersections.append((i + 1, j, inter))  # Store indices and intersection point
+                return (i, j, inter)
+    return None
 
-    if not intersections:
-        return None
-
-    first_idx, last_idx, first_pt = min(intersections, key=lambda x: x[0])
-    _, _, last_pt = max(intersections, key=lambda x: x[1])
-
-    return first_idx, last_idx, first_pt, last_pt
-
-def trim_polyline(points):
-    """Trims the polyline to start and end at exact intersection points."""
-    result = find_self_intersections(points)
+def join_polylines_at_intersection(poly1, poly2):
+    """Trim both polylines to intersection point and join them."""
+    result = find_intersection(poly1, poly2)
     if result is None:
-        return points  # No trimming needed
+        return None, None, None
 
-    first_idx, last_idx, first_pt, last_pt = result
-    return np.vstack([first_pt, points[first_idx:last_idx + 1], last_pt])
+    i, j, inter = result
 
-def plot_polylines(original, trimmed, first_pt, last_pt):
-    """Plots the original and trimmed polylines for visualization."""
+    # Option: poly1 up to intersection, poly2 from intersection
+    poly1_trimmed = np.vstack([poly1[:i + 1], inter])
+    poly2_trimmed = np.vstack([inter, poly2[j + 1:]])
+
+    joined = np.vstack([poly1_trimmed, poly2_trimmed])
+    return joined, poly1_trimmed, poly2_trimmed
+
+def plot_join(poly1, poly2, joined, inter):
     plt.figure(figsize=(8, 6))
-
-    # Plot original polyline
-    plt.plot(original[:, 0], original[:, 1], 'b-o', label="Original Polyline", alpha=0.5)
-
-    # Plot trimmed polyline
-    plt.plot(trimmed[:, 0], trimmed[:, 1], 'r-o', label="Trimmed Polyline", linewidth=2)
-
-    # Mark intersection points
-    plt.scatter([first_pt[0], last_pt[0]], [first_pt[1], last_pt[1]], color='green', s=100, label="Intersections", zorder=3)
-
-    plt.xlabel("X")
-    plt.ylabel("Y")
+    plt.plot(poly1[:, 0], poly1[:, 1], 'b--o', label='Polyline 1 (original)', alpha=0.5)
+    plt.plot(poly2[:, 0], poly2[:, 1], 'g--o', label='Polyline 2 (original)', alpha=0.5)
+    plt.plot(joined[:, 0], joined[:, 1], 'r-o', linewidth=2, label='Joined Polyline')
+    plt.scatter(inter[0], inter[1], s=100, color='purple', label='Intersection')
     plt.legend()
+    plt.title("Joined Polyline at Intersection")
     plt.grid(True)
-    plt.title("Polyline Trimming with Exact Intersections")
     plt.show()
 
-# Example polyline
-polyline = np.array([
-    [0, 0], [1, 2], [2, 4], [3, 2], [4, 0],  # Up and down
-    [2, -2], [0, -4], [0, -2], [1, 0], [4, 1]  # Looping back
-])
+# Example polylines
+poly1 = np.array([[0, 0], [2, 2], [4, 0]])
+poly2 = np.array([[1, 3], [2, 1], [3, -1]])
 
-trimmed_polyline = trim_polyline(polyline)
-
-# Get intersection points for plotting
-result = find_self_intersections(polyline)
-if result:
-    _, _, first_pt, last_pt = result
-    plot_polylines(polyline, trimmed_polyline, first_pt, last_pt)
+joined, trimmed1, trimmed2 = join_polylines_at_intersection(poly1, poly2)
+if joined is not None:
+    _, _, intersection_point = find_intersection(poly1, poly2)
+    plot_join(poly1, poly2, joined, intersection_point)
 else:
-    print("No intersections found.")
+    print("No intersection found between polylines.")

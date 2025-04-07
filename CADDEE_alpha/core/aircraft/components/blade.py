@@ -268,7 +268,7 @@ class Blade(Wing):
 
         #create spar surfaces
 
-        #front spar
+        #front spar internal surface
         parametric_points_front = spar_top_front.tolist()+spar_bot_front.tolist()
         fitting_coords = np.array([[u, 0] for u in u_coords] + [[u, 1] for u in u_coords])
         fitting_values = self.geometry.evaluate(parametric_points_front)
@@ -277,7 +277,7 @@ class Blade(Wing):
         front_spar_name="Blade_spar_front"
         self._add_geometry(front_spar_index, front_spar, front_spar_name)
 
-        #rear spar
+        #rear spar internal surface
         parametric_points_rear = spar_top_rear.tolist()+spar_bot_rear.tolist()
         fitting_coords = np.array([[u, 0] for u in u_coords] + [[u, 1] for u in u_coords])
         fitting_values = self.geometry.evaluate(parametric_points_rear)
@@ -289,7 +289,6 @@ class Blade(Wing):
         front_spar_geometry = self.create_subgeometry(search_names=front_spar_name)
         rear_spar_geometry = self.create_subgeometry(search_names=rear_spar_name)
 
-        #TODO: return a set of internal geometries
         return front_spar_geometry,rear_spar_geometry
     
     def create_beam_xs_meshes(
@@ -324,51 +323,83 @@ class Blade(Wing):
         xs = []
 
         for i,u_coord in enumerate(u_coords):            
+            # For each wing skin surface: 
+            # IF the Radius of curvature exceeds the maximum design thickness, 
+            # purge the corresponding pts from the offset pts
+            
+            #TOP SURFACE:
             print('mesh #'+str(i))
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top,num_parametric)
-            
             roc_top = self._get_roc(parametric_top)
 
-            print('min top roc:')
+            print('Top Min. RoC:')
             print(np.min(np.abs(roc_top)))
-            #IF the Radius of curvature exceeds the maximum design thickness, purge the corresponding pts from the offset pts
-            # self._get_problematic_offset_pts()
-
+           
             #evaluate thicknesses for comparison to radius of curvature
-            #TODO: swap this for the design variable upper limit:
+            #TODO: in an optimization run, swap for the design variable upper limit:
             thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_top).value
-
             #get indices where radius of curvature does not exceed thickness
             valid_top_offset_pts_indices = (np.abs(roc_top) >= thicknesses).nonzero()
             #restrict offset pts to the valid pts:
             top_pts_offset=top_pts_offset[list(valid_top_offset_pts_indices[0]),:]
             print("num top pts="+str(top_pts.shape[0])+', num offset pts:'+str(top_pts_offset.shape[0]))
 
+            #BOTTOM SURFACE:
             parametric_bot = [(bot_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
             bot_pts,bot_pts_offset = self._get_pts_and_offset_pts(parametric_bot,num_parametric)
-            
             roc_bot = self._get_roc(parametric_bot)
-            print('min bot roc:')
+            print('Bottom Min. RoC:')
             print(np.min(np.abs(roc_bot)))
 
             #evaluate thicknesses for comparison to radius of curvature
             thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_bot).value
-            #condition to check whether offset pt should be included or not:
             #get indices where radius of curvature does not exceed thickness
             valid_bot_offset_pts_indices = (np.abs(roc_bot) >= thicknesses).nonzero()
             #restrict to the valid pts:
             bot_pts_offset=bot_pts_offset[list(valid_bot_offset_pts_indices[0]),:]
-            # top_pts_offset=top_pts_offset[valid_top_offset_pts_indices]
             print("num bot pts="+str(bot_pts.shape[0])+', num offset pts:'+str(bot_pts_offset.shape[0]))
             
-            #combine skin surface points into a single array
+            #combine skin surface points into a single array starting at the trailing edge on the upper surface
             if np.isclose(bot_pts[0,:].value, top_pts[-1,:].value).all():
                 skin_pts = csdl.concatenate([top_pts,bot_pts[1:,:]])
             else:
                 skin_pts = csdl.concatenate([top_pts,bot_pts])
 
-            #same for offset pts
+            #for the offset pts need to detect if there is an intersection between the upper and lower curves
+            # since we used the ROC constraint, we know there can only be a maximum of two intersections 
+            # from the discontinuous derivative at the leading/trailing edges
+
+            #we use the simple heuristic that if the intersection idx is greater 
+            intersections = self._trim_offset_pts(top_pts_offset,bot_pts_offset)
+            if intersections is None:    
+                print("No intersections detected")
+            elif len(intersections)==1:
+                top_pts_offset = top_pts_offset[intersections[0][0]:,:]
+                bot_pts_offset = bot_pts_offset[:intersections[0][1],:]
+                
+                #add intersection:
+                intersection_pt = np.array([[intersections[0][2][0],
+                                            top_pts_offset[0,1].value[0],
+                                            intersections[0][2][1]]])
+                #detect whether it was the leading or trailing edge
+                #trailing edge case:
+                if intersections[0][0]>intersections[0][1]:
+                    #add intersection point:
+                    top_pts_offset = csdl.concatenate([intersection_pt,top_pts_offset])
+                    bot_pts_offset = csdl.concatenate([intersection_pt,bot_pts_offset])
+                #leading edge case:
+                else:
+                    top_pts_offset = csdl.concatenate([top_pts_offset,intersection_pt])
+                    bot_pts_offset = csdl.concatenate([bot_pts_offset,intersection_pt])
+            elif len(intersections)==2:
+                top_pts_offset = top_pts_offset[intersections[0][0]:intersections[1][0],:]
+                bot_pts_offset = bot_pts_offset[intersections[1][1]:intersections[0][1],:]
+            else:
+                raise ValueError("Incorrect number of intersections detected")
+            print(intersections)
+
+            #TODO: figure out whether the intersection point should be added ?
             if np.isclose(bot_pts_offset[0,:].value, top_pts_offset[-1,:].value).all():
                 skin_offset_pts = csdl.concatenate([top_pts_offset,bot_pts_offset[1:,:]])
             else:
@@ -383,11 +414,11 @@ class Blade(Wing):
                                                     skin_offset_pts,
                                                     skin_surf_name,
                                                     num_parametric)
-            skin_surf_geometry.plot()
+            skin_surf_geometry.plot(opacity=0.75)
             skin_mesh = self._mesh_curve_and_offset(skin_pts,
                                                     skin_offset_pts,
-                                                    name=skin_surf_geometry,
-                                                    plot=True)
+                                                    name=skin_surf_name,
+                                                    plot=False)
             skin_output = cd.mesh_utils.import_mesh(file=skin_mesh,
                                       component=skin_surf_geometry,
                                       plot=True)
@@ -420,7 +451,49 @@ class Blade(Wing):
             
         self.geometry.plot(opacity=0.5)
 
+    def _trim_offset_pts(self,pts1,pts2):
+        """ Return the possible two intersections between the offset curves"""
 
+        def line_intersection(p1, p2, p3, p4):
+            """Returns intersection point of segments (p1,p2) and (p3,p4), or None."""
+            x1, y1 = p1
+            x2, y2 = p2
+            x3, y3 = p3
+            x4, y4 = p4
+
+            denom = (x1 - x2)*(y3 - y4) - (y1 - y2)*(x3 - x4)
+            if abs(denom) < 1e-10:
+                return None
+
+            px = ((x1*y2 - y1*x2)*(x3 - x4) - (x1 - x2)*(x3*y4 - y3*x4)) / denom
+            py = ((x1*y2 - y1*x2)*(y3 - y4) - (y1 - y2)*(x3*y4 - y3*x4)) / denom
+            point = np.array([px, py])
+
+            if (min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2) and
+                min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)):
+                return point
+            return None
+
+        def find_all_intersections(poly1, poly2):
+            """Returns list of (i, j, intersection_point) for all intersections."""
+            intersections = []
+            for i in range(len(poly1) - 1):
+                p1, p2 = poly1[i], poly1[i + 1]
+                for j in range(len(poly2) - 1):
+                    q1, q2 = poly2[j], poly2[j + 1]
+                    inter = line_intersection(p1, p2, q1, q2)
+                    if inter is not None:
+                        intersections.append((i, j, inter))
+            
+            if len(intersections) == 0:
+                return None
+            
+            return intersections
+        
+        return find_all_intersections(pts1.value[:,(0,2)],pts2.value[:,(0,2)])
+
+
+    
     def _get_roc(self,parametric_pts):
         '''gets the radius of curvature in the plane of a parametric 
         direction at specified parametric pts '''
@@ -429,7 +502,7 @@ class Blade(Wing):
         #TOTAL HACK: if either parametric derivative value is 0, set to some small number to prevent divide by zero
         
         roc = ( ((v_prime[:,0]**2 + v_prime[:,2]**2)**(3/2)) /
-                   (v_prime[:,0]*v_double_prime[:,2] - v_prime[:,2]*v_double_prime[:,0] ) )
+                (v_prime[:,0]*v_double_prime[:,2] - v_prime[:,2]*v_double_prime[:,0] ) )
         return roc
          
                 
@@ -491,13 +564,15 @@ class Blade(Wing):
         for offset_pt in offset_pts.value:
             pts_offset_list.append(gmsh.model.occ.add_point(offset_pt[0],offset_pt[1],offset_pt[2]))
 
-        #edit the 
-        spline = gmsh.model.occ.add_spline(pts_list[:-1])
-        spline_offset = gmsh.model.occ.add_spline(pts_offset_list[:-1])
+        #ensure that the pts and offset points make a fully enclosed loop
+        pts_list[-1] = pts_list[0]
+        pts_offset_list[-1] = pts_offset_list[0]
+        spline = gmsh.model.occ.add_spline(pts_list)
+        spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
         line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
         line2 = gmsh.model.occ.add_line(pts_offset_list[-1],pts_list[-1])
         
-        CL1 = gmsh.model.occ.add_curve_loop([spline,line2,spline_offset,line1])
+        CL1 = gmsh.model.occ.add_curve_loop([-line1,spline,line1,spline_offset])
         surf = gmsh.model.occ.add_plane_surface([CL1])
         gmsh.model.add_physical_group(2,[surf],name="surface")
 
@@ -547,75 +622,7 @@ class Blade(Wing):
         
         return insert_idx
 
-    def line_intersection(p1, p2, p3, p4):
-        """Computes the intersection point of segments (p1, p2) and (p3, p4), if it exists."""
-        x1, y1 = p1
-        x2, y2 = p2
-        x3, y3 = p3
-        x4, y4 = p4
-
-        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if abs(denom) < 1e-10:  # Parallel or coincident lines
-            return None
-
-        px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
-        py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
-
-        if (
-            min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2)
-            and min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)
-        ):
-            return np.array([px, py])
-        return None
-
-    def find_self_intersections(self,points):
-        """Finds exact intersection points and their indices."""
-        intersections = []
-
-        for i in range(len(points) - 1):
-            p1, p2 = points[i], points[i + 1]
-            for j in range(i + 2, len(points) - 1):  # Avoid adjacent segments
-                p3, p4 = points[j], points[j + 1]
-                inter = self.line_intersection(p1, p2, p3, p4)
-                if inter is not None:
-                    intersections.append((i + 1, j, inter))  # Store indices and intersection point
-
-        if not intersections:
-            return None
-
-        first_idx, last_idx, first_pt = min(intersections, key=lambda x: x[0])
-        _, _, last_pt = max(intersections, key=lambda x: x[1])
-
-        return first_idx, last_idx, first_pt, last_pt
-
-    def trim_polyline(self,points):
-        """Trims the polyline to start and end at exact intersection points."""
-        result = self.find_self_intersections(points)
-        if result is None:
-            return points  # No trimming needed
-
-        first_idx, last_idx, first_pt, last_pt = result
-        return np.vstack([first_pt, points[first_idx:last_idx + 1], last_pt])
-
-    def plot_polylines(original, trimmed, first_pt, last_pt):
-        """Plots the original and trimmed polylines for visualization."""
-        plt.figure(figsize=(8, 6))
-
-        # Plot original polyline
-        plt.plot(original[:, 0], original[:, 1], 'b-o', label="Original Polyline", alpha=0.5)
-
-        # Plot trimmed polyline
-        plt.plot(trimmed[:, 0], trimmed[:, 1], 'r-o', label="Trimmed Polyline", linewidth=2)
-
-        # Mark intersection points
-        plt.scatter([first_pt[0], last_pt[0]], [first_pt[1], last_pt[1]], color='green', s=100, label="Intersections", zorder=3)
-
-        plt.xlabel("X")
-        plt.ylabel("Y")
-        plt.legend()
-        plt.grid(True)
-        plt.title("Polyline Trimming with Exact Intersections")
-        plt.show()
+    
             # top_surf_xs.project
             # in progress
             # stacked_pts = #top_pts and top_pts_offset (make a variable )
