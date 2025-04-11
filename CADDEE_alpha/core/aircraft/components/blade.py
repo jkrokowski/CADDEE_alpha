@@ -311,7 +311,8 @@ class Blade(Wing):
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
         #number of parametric points to be evaluated for each surface
-        num_parametric = 1000
+        #TODO: need to get the mapping from parametric spacing to physical spacing
+        num_parametric = 500
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric) # linear spacing doesn't perform well
         # np.append(0.5-np.logspace(-1,1,num=20)[::-1]/20,0.5)
@@ -328,7 +329,7 @@ class Blade(Wing):
             # purge the corresponding pts from the offset pts
             
             #TOP SURFACE:
-            print('mesh #'+str(i))
+            print(f'Section {i}/{num_spanwise}')
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top,num_parametric)
             roc_top = self._get_roc(parametric_top)
@@ -369,47 +370,84 @@ class Blade(Wing):
             #for the offset pts need to detect if there is an intersection between the upper and lower curves
             # since we used the ROC constraint, we know there can only be a maximum of two intersections 
             # from the discontinuous derivative at the leading/trailing edges
+            # additionally, since the same number of parametric points are used to construct each curve, we can 
+            # detect the le vs te based on comparing which index is greater 
+            #   upper_index < lower_index = te
+            #   upper_index > lower_index = le
 
-            #we use the simple heuristic that if the intersection idx is greater 
             intersections = self._trim_offset_pts(top_pts_offset,bot_pts_offset)
+            #depending on the number of intersections, modify the collection of offset points
             if intersections is None:    
                 print("No intersections detected")
-            elif len(intersections)==1:
-                top_pts_offset = top_pts_offset[intersections[0][0]:,:]
-                bot_pts_offset = bot_pts_offset[:intersections[0][1],:]
-                
-                #add intersection:
+            elif len(intersections)==1:        
+                #get intersetion point:
                 intersection_pt = np.array([[intersections[0][2][0],
                                             top_pts_offset[0,1].value[0],
                                             intersections[0][2][1]]])
-                #detect whether it was the leading or trailing edge
+                #detect whether it was the leading or trailing edge with an intersection
                 #trailing edge case:
-                if intersections[0][0]>intersections[0][1]:
-                    #add intersection point:
+                if intersections[0][0]<intersections[0][1]:
+                    print("One intersection, trailing edge") 
+                    #trim offset points before and after intersection:
+                    top_pts_offset = top_pts_offset[(intersections[0][0]+1):,:]
+                    bot_pts_offset = bot_pts_offset[:intersections[0][1],:]
+                    #add intersection point to upper and lower skin (close loop)
                     top_pts_offset = csdl.concatenate([intersection_pt,top_pts_offset])
-                    bot_pts_offset = csdl.concatenate([intersection_pt,bot_pts_offset])
+                    bot_pts_offset = csdl.concatenate([bot_pts_offset,intersection_pt])
                 #leading edge case:
                 else:
+                    print("One intersection, leading edge") 
+                    #trim offset points before and after intersection:
+                    top_pts_offset = top_pts_offset[:intersections[0][0],:]
+                    bot_pts_offset = bot_pts_offset[intersections[0][1]+1,:]
+                    #add intersection point (only to top skin offset):
                     top_pts_offset = csdl.concatenate([top_pts_offset,intersection_pt])
-                    bot_pts_offset = csdl.concatenate([bot_pts_offset,intersection_pt])
+
             elif len(intersections)==2:
-                top_pts_offset = top_pts_offset[intersections[0][0]:intersections[1][0],:]
-                bot_pts_offset = bot_pts_offset[intersections[1][1]:intersections[0][1],:]
+                print("Two intersections, leading & trailing edges:")
+                #get intersection points:
+                y_value = top_pts_offset[0,1].value[0]
+                #determine which intersection is leading vs trailing edge:
+                if intersections[0][0]<intersections[0][1]:
+                    te_intersection = intersections[0]
+                    le_intersection = intersections[1]
+                else:
+                    te_intersection = intersections[1]
+                    le_intersection = intersections[0]
+                te_intersection_pt = np.array([[te_intersection[2][0],
+                                            y_value,
+                                            te_intersection[2][1]]])
+                le_intersection_pt = np.array([[le_intersection[2][0],
+                                            y_value,
+                                            le_intersection[2][1]]])                
+                #trim offset points:
+                top_pts_offset = top_pts_offset[te_intersection[0]+1:le_intersection[0],:]
+                bot_pts_offset = bot_pts_offset[le_intersection[1]+1:te_intersection[1],:]
+                #add intersection points:
+                top_pts_offset = csdl.concatenate([te_intersection_pt,top_pts_offset,le_intersection_pt])
+                bot_pts_offset = csdl.concatenate([bot_pts_offset,te_intersection_pt])
             else:
                 raise ValueError("Incorrect number of intersections detected")
             print(intersections)
 
-            #TODO: figure out whether the intersection point should be added ?
+            #remove duplicate points from leading edge, if present
             if np.isclose(bot_pts_offset[0,:].value, top_pts_offset[-1,:].value).all():
-                skin_offset_pts = csdl.concatenate([top_pts_offset,bot_pts_offset[1:,:]])
-            else:
-                skin_offset_pts = csdl.concatenate([top_pts_offset,bot_pts_offset])
+                bot_pts_offset=bot_pts_offset[1:,:]
+            #ensure that the trailing edge point is duplicated
+            if not np.isclose(bot_pts_offset[-1,:].value, top_pts_offset[0,:].value).all():
+                raise ValueError("Trailing edge points do not match")
+            
+            #join the two collections of offset points:
+            skin_offset_pts = csdl.concatenate([top_pts_offset,bot_pts_offset])
+            
             print("num skin pts="+str(skin_pts.shape[0])+', num offset pts:'+str(skin_offset_pts.shape[0]))
+            
+            # self.plot_pts(skin_pts,skin_offset_pts)
+            n_thickness = 3
+            approx_mesh_size=np.min(thicknesses)/n_thickness
 
             #fit a single surface to the outer skin
             skin_surf_name='skin_'+str(i)
-            print("skin pts:")
-            print(skin_pts.value)
             skin_surf_geometry = self._fit_xs_surface(skin_pts,
                                                     skin_offset_pts,
                                                     skin_surf_name,
@@ -418,38 +456,68 @@ class Blade(Wing):
             skin_mesh = self._mesh_curve_and_offset(skin_pts,
                                                     skin_offset_pts,
                                                     name=skin_surf_name,
-                                                    plot=False)
+                                                    plot=True,
+                                                    meshsize=approx_mesh_size,
+                                                    num_boundary_comp=2)
             skin_output = cd.mesh_utils.import_mesh(file=skin_mesh,
                                       component=skin_surf_geometry,
                                       plot=True)
             
-            # top_surf_name='top_skin_xs_'+str(i)
-            # top_xs_surf_geometry = self._fit_xs_surface(top_pts,
-            #                                         top_pts_offset,
-            #                                         top_surf_name,
-            #                                         num_parametric)
-            # top_skin_mesh = self._mesh_curve_and_offset(top_pts,top_pts_offset,name=top_surf_name)
-
-            # bot_surf_name='bot_skin_xs_'+str(i)
-            # bot_xs_surf_geometry = self._fit_xs_surface(bot_pts,
-            #                                         bot_pts_offset,
-            #                                         bot_surf_name,
-            #                                         num_parametric)
-            # bot_skin_mesh = self._mesh_curve_and_offset(bot_pts,bot_pts_offset,name=bot_surf_name)
-
-
+            #Constuct front and rear spar sections (e.g. meshes from offsetting spar surfaces)
+            #front spar
+            parametric_front_spar = [(front_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            front_spar_pts,front_spar_pts_offset = self._get_pts_and_offset_pts(parametric_front_spar,num_parametric)
+            front_spar_surf_name='front_spar_'+str(i)
+            front_spar_surf_geometry = self._fit_xs_surface(front_spar_pts,
+                                                    front_spar_pts_offset,
+                                                    front_spar_surf_name,
+                                                    num_parametric)
+            front_spar_surf_geometry.plot(opacity=0.75)
+            front_spar_mesh = self._mesh_curve_and_offset(front_spar_pts,
+                                                    front_spar_pts_offset,
+                                                    name=front_spar_surf_name,
+                                                    plot=True,
+                                                    meshsize=approx_mesh_size)
+            front_spar_output = cd.mesh_utils.import_mesh(file=front_spar_mesh,
+                                      component=front_spar_surf_geometry,
+                                      plot=True)
+            #rear spar
+            parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar,num_parametric)
+            rear_spar_surf_name='rear_spar_'+str(i)
+            rear_spar_surf_geometry = self._fit_xs_surface(rear_spar_pts,
+                                                    rear_spar_pts_offset,
+                                                    rear_spar_surf_name,
+                                                    num_parametric)
+            rear_spar_surf_geometry.plot(opacity=0.75)
+            rear_spar_mesh = self._mesh_curve_and_offset(rear_spar_pts,
+                                                    rear_spar_pts_offset,
+                                                    name=rear_spar_surf_name,
+                                                    plot=True,
+                                                    meshsize=approx_mesh_size)
+            rear_spar_output = cd.mesh_utils.import_mesh(file=rear_spar_mesh,
+                                      component=rear_spar_surf_geometry,
+                                      plot=True)
             
-            #given a gmsh .msh and geometry component
-            #return node values evaluated on surface, parametric coords and connectivity
-            # top_skin_output = cd.mesh_utils.import_mesh(file=top_skin_mesh,
-            #                           component=top_xs_surf_geometry,
-            #                           plot=True)
             
-            # bot_skin_output = cd.mesh_utils.import_mesh(file=bot_skin_mesh,
-            #                           component=bot_xs_surf_geometry,
-            #                           plot=True)
+
+            #Construct spar caps by extracting segement of inner offset curve of skin between spar surfaces
+
+            #construct front and rear fill surfaces 
+
+            #construct balance mass surface?
             
-        self.geometry.plot(opacity=0.5)
+                    
+        # self.geometry.plot(opacity=0.5)
+
+    def plot_pts(self,pts,offset_pts):
+        plt.figure(figsize=(8, 6))
+        plt.plot(pts.value[:, 0], pts.value[:, 2], 'b--o', label='Skin')
+        plt.plot(offset_pts.value[:, 0], offset_pts.value[:, 2], 'g--o', label='Offset Skin')
+        plt.legend()
+        plt.title("polyline representation")
+        plt.grid(True)
+        plt.show()
 
     def _trim_offset_pts(self,pts1,pts2):
         """ Return the possible two intersections between the offset curves"""
@@ -552,10 +620,10 @@ class Blade(Wing):
         return xs_surf_geometry
     
 
-    def _mesh_curve_and_offset(self,pts,offset_pts,name='blade_xs',plot=False):
+    def _mesh_curve_and_offset(self,pts,offset_pts,name='blade_xs',plot=False,meshsize=1,num_boundary_comp=1):
         ''' returns a mesh of a thickened curve in the plane'''
         gmsh.initialize()
-        #add upper and lower surface points
+        #initaite list of points
         pts_list = []
         pts_offset_list = []
         #need to loop through individually,as pts and offset_pts may be different lengths
@@ -563,16 +631,26 @@ class Blade(Wing):
             pts_list.append(gmsh.model.occ.add_point(pt[0],pt[1],pt[2]))
         for offset_pt in offset_pts.value:
             pts_offset_list.append(gmsh.model.occ.add_point(offset_pt[0],offset_pt[1],offset_pt[2]))
-
         #ensure that the pts and offset points make a fully enclosed loop
-        pts_list[-1] = pts_list[0]
-        pts_offset_list[-1] = pts_offset_list[0]
-        spline = gmsh.model.occ.add_spline(pts_list)
-        spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
-        line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
-        line2 = gmsh.model.occ.add_line(pts_offset_list[-1],pts_list[-1])
+        if num_boundary_comp==1:
+            spline = gmsh.model.occ.add_spline(pts_list)
+            spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
+            line1 = gmsh.model.occ.add_line(pts_offset_list[0],pts_list[0])
+            line2 = gmsh.model.occ.add_line(pts_list[-1],pts_offset_list[-1],)
+            
+            CL1 = gmsh.model.occ.add_curve_loop([line1,spline,line2,-spline_offset])
+        elif num_boundary_comp == 2:
+            #ensure that the pts and offset points make a fully enclosed loop
+            pts_list[-1] = pts_list[0]
+            pts_offset_list[-1] = pts_offset_list[0]
+            spline = gmsh.model.occ.add_spline(pts_list)
+            spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
+            line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
+            
+            CL1 = gmsh.model.occ.add_curve_loop([-line1,spline,line1,spline_offset])
+        else:
+            raise ValueError('Number of boundary components greater than 2 not supported!')
         
-        CL1 = gmsh.model.occ.add_curve_loop([-line1,spline,line1,spline_offset])
         surf = gmsh.model.occ.add_plane_surface([CL1])
         gmsh.model.add_physical_group(2,[surf],name="surface")
 
@@ -582,9 +660,8 @@ class Blade(Wing):
         
         gmsh.model.occ.synchronize()
         
-        #need to have a more intelligent way of selecting mesh size
-        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.001)
-        gmsh.option.setNumber("Mesh.MeshSizeMax", 0.005)
+        gmsh.option.setNumber("Mesh.MeshSizeMin", meshsize*.8)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", meshsize*1.2)
         gmsh.option.set_number("Mesh.SaveAll", 2)
         gmsh.model.mesh.generate(2)
         if plot:
@@ -592,7 +669,8 @@ class Blade(Wing):
 
         filename = "stored_files/"+ name + '.msh'
         gmsh.write(filename)
-        
+        filename2 = "stored_files/"+ name + '.vtk'
+        gmsh.write(filename2)
         gmsh.finalize()
 
         return  filename

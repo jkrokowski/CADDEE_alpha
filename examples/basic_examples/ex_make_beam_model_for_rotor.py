@@ -79,45 +79,74 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     pusher_prop = cd.aircraft.components.Rotor(radius=2.74/2.5, geometry=pusher_prop_geometry)
     airframe.comps["pusher_prop"] = pusher_prop
 
-    # pusher_prop.geometry.plot()
-
     pusher_prop_blade_geometry = pusher_prop.create_subgeometry(search_names=["Rotor_9_blades, 0"])
-    pusher_prop_blade_geometry.plot(opacity=0.5)
+    # pusher_prop_blade_geometry.plot(opacity=0.5)
     pusher_prop_blade = cd.aircraft.components.Blade(AR=1,S_ref=1,
                                                      geometry=pusher_prop_blade_geometry)
     top_index = 174
     bot_index = 175
+    skin_indices = [top_index,bot_index]
+    #can also get these indices by something like:
+    # skin_indices = list(pusher_prop_blade.geometry.function_names.keys())
 
+    #select surfaces to define as subgeometries
     top_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(top_index)])
-
     bottom_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(bot_index)])
+    pusher_prop_skin_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in skin_indices])
+    
+    #create the front and rear spar surfaces
+    #TODO: need to add indices to surface geometries to names to be about to create subgeometries
     front_spar_geometry,rear_spar_geometry = pusher_prop_blade.construct_internal_structure(
         top_geometry,
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
     )
+    spar_indices = [list(spar.function_names.keys())[0] for spar in [front_spar_geometry,rear_spar_geometry]]
+    pusher_prop_spar_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in spar_indices])
+
     pusher_prop_blade.geometry.plot(opacity=0.5)
+    
+    #MATERIALS
+    #Aluminum
+    E_Al = csdl.Variable(value=69E9, name='E_Al')
+    G_Al = csdl.Variable(value=26E9, name='G_Al')
+    density_Al = csdl.Variable(value=2700, name='density_Al')
+    nu_Al = csdl.Variable(value=0.33, name='nu_Al')
+    aluminum = cd.materials.IsotropicMaterial(name='Aluminum', density=density_Al, E=E_Al, nu=nu_Al, G=G_Al)
 
+    #Polyurethane Foam 
+    E_foam = csdl.Variable(value=7E8, name='E_foam')
+    G_foam = csdl.Variable(value=6E8, name='G_foam')
+    density_foam = csdl.Variable(value=400, name='density_foam')
+    nu_foam = csdl.Variable(value=0.3, name='nu_foam')
+    aluminum = cd.materials.IsotropicMaterial(name='polyurenthane_foam', density=density_foam, E=E_foam, nu=nu_foam, G=G_foam)
+
+    #DEFINE SURFACE THICKNESSES
+    #create a constant function space for thicknesses 
     fxn_space = lfs.ConstantSpace(2) #change if you want variable 
-    blade_t_fxn_space = pusher_prop_blade.geometry.create_parallel_space(fxn_space)
-    # pusher_prop_blade.geometry.functions or .function_names
-    #TODO: need to assign different surfaces and handle tip/root caps (2 surfs each)
-    surf_indices = list(pusher_prop_blade.geometry.function_names.keys())
-    surf_thickneses=0.001*np.ones((len(surf_indices),1))
-    coeffs,fxn_set = blade_t_fxn_space.initialize_function(1,surf_thickneses)
+    
+    #create functionspace for skin thickness
+    skin_t_fxn_space = pusher_prop_skin_geometry.create_parallel_space(fxn_space)
+    skin_thickness = 0.001
+    skin_thickneses=skin_thickness*np.ones((len(skin_indices),1))
+    skin_coeffs,skin_fxn_set = skin_t_fxn_space.initialize_function(1,skin_thickneses)
 
-    #define material
-    E = csdl.Variable(value=69E9, name='E')
-    G = csdl.Variable(value=26E9, name='G')
-    density = csdl.Variable(value=2700, name='density')
-    nu = csdl.Variable(value=0.33, name='nu')
-    aluminum = cd.materials.IsotropicMaterial(name='Aluminum', density=density, E=E, nu=nu, G=G)
+    #create functionspaces for spar 
+    spar_t_fxn_space = pusher_prop_spar_geometry.create_parallel_space(fxn_space)
+    spar_thickness = 0.005
+    spar_thickneses=spar_thickness*np.ones((len(spar_indices),1))
+    spar_coeffs,spar_fxn_set = spar_t_fxn_space.initialize_function(1,spar_thickneses)
 
     #set material for each surface
     pusher_prop_blade.quantities.material_properties.set_material(
         material=aluminum,
-        thickness=fxn_set)
+        thickness=skin_fxn_set)
   
+    pusher_prop_blade.quantities.material_properties.set_material(
+        material=aluminum,
+        thickness=spar_fxn_set)
+  
+
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
                                             front_spar_geometry=front_spar_geometry, 
@@ -126,13 +155,13 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     
     #make plot of upper and lower skin surfaces for illustrative purposes:
     for i in range(10):
-        pusher_prop_blade_xs_ts = pusher_prop_blade.create_subgeometry(search_names=["top_skin_xs_"+str(i)])
-
-        pusher_prop_blade_xs_bs = pusher_prop_blade.create_subgeometry(search_names=["bot_skin_xs_"+str(i)])
+        pusher_prop_blade_xs_skin = pusher_prop_blade.create_subgeometry(search_names=["skin_"+str(i)])
         
-        xs_bs_plot=pusher_prop_blade_xs_bs.plot(color=000000)
+        xs_plot=pusher_prop_blade_xs_skin.plot(color=000000)
 
-        pusher_prop_blade_xs_ts.plot(additional_plotting_elements=[xs_bs_plot],opacity=0.5)
+        # pusher_prop_blade_xs_ts.plot(additional_plotting_elements=[xs_bs_plot],opacity=0.5)
+
+    pusher_prop_blade.geometry.plot(opacity=0.5)
 
     aluminum_albatross = ALBATROSS.material.caddee_material_to_albatross(aluminum)
 
