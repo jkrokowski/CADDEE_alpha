@@ -33,7 +33,6 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     wing = cd.aircraft.components.Wing(AR=12.12, S_ref=19.6, taper_ratio=0.2, sweep=np.deg2rad(-20),
                                        geometry=wing_geometry, tight_fit_ffd=True)
     # wing.geometry.plot(opacity=0.3)
-    # exit()
     top_surface_inds = [75, 79, 83, 87]
     top_geometry = wing.create_subgeometry(search_names=[str(i) for i in top_surface_inds])
     bottom_geometry = wing.create_subgeometry(search_names=[str(i+1) for i in top_surface_inds])
@@ -95,8 +94,8 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     pusher_prop_skin_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in skin_indices])
     
     #create the front and rear spar surfaces
-    #TODO: need to add indices to surface geometries to names to be about to create subgeometries
-    front_spar_geometry,rear_spar_geometry = pusher_prop_blade.construct_internal_structure(
+    #TODO: need to add indices to surface geometries names to be able to create subgeometries
+    front_spar_geometry,rear_spar_geometry = pusher_prop_blade.create_internal_geometry(
         top_geometry,
         bottom_geometry,
         spar_locations=np.array([0.25,0.6])
@@ -104,6 +103,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     spar_indices = [list(spar.function_names.keys())[0] for spar in [front_spar_geometry,rear_spar_geometry]]
     pusher_prop_spar_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in spar_indices])
 
+    #view the blade with the new spar surfaces
     pusher_prop_blade.geometry.plot(opacity=0.5)
     
     #MATERIALS
@@ -119,7 +119,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     G_foam = csdl.Variable(value=6E8, name='G_foam')
     density_foam = csdl.Variable(value=400, name='density_foam')
     nu_foam = csdl.Variable(value=0.3, name='nu_foam')
-    aluminum = cd.materials.IsotropicMaterial(name='polyurenthane_foam', density=density_foam, E=E_foam, nu=nu_foam, G=G_foam)
+    polyurethane_foam = cd.materials.IsotropicMaterial(name='polyurenthane_foam', density=density_foam, E=E_foam, nu=nu_foam, G=G_foam)
 
     #DEFINE SURFACE THICKNESSES
     #create a constant function space for thicknesses 
@@ -137,22 +137,48 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     spar_thickneses=spar_thickness*np.ones((len(spar_indices),1))
     spar_coeffs,spar_fxn_set = spar_t_fxn_space.initialize_function(1,spar_thickneses)
 
-    #set material for each surface
-    pusher_prop_blade.quantities.material_properties.set_material(
-        material=aluminum,
-        thickness=skin_fxn_set)
-  
-    pusher_prop_blade.quantities.material_properties.set_material(
-        material=aluminum,
-        thickness=spar_fxn_set)
-  
+    #set materials and thickness for each surface of which a curve will be extracted to 
+    #   construct the cross-section (e.g. skin, spar box)
+    #   foam fills will be assigned later
+    # pusher_prop_blade.quantities.material_properties.set_material(
+    #     material=aluminum,
+    #     thickness=skin_fxn_set)
 
+    # pusher_prop_blade.quantities.material_properties.set_material(
+    #     material=aluminum,
+    #     thickness=spar_fxn_set)
+
+    pusher_prop_blade.quantities.material_properties.add_material(
+        material=aluminum,
+        thickness=skin_fxn_set,
+        surface_indices=skin_indices
+    )
+    
+    pusher_prop_blade.quantities.material_properties.add_material(
+        material=aluminum,
+        thickness=spar_fxn_set,
+        surface_indices=spar_indices
+    )
+    
+    #TODO: break this function into a few separate parts
+
+    #construct the surfaces for each cross-section
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
                                             front_spar_geometry=front_spar_geometry, 
                                             rear_spar_geometry=rear_spar_geometry,
                                             num_spanwise=10)
     
+    #construct the meshes for each surface in each cross-section
+
+    #project each mesh for each surface onto the fit cross-sectional surfaces
+
+
+
+    exit()
+
+
+    # ================== LIFT ROTORS =========================== #
     #make plot of upper and lower skin surfaces for illustrative purposes:
     for i in range(10):
         pusher_prop_blade_xs_skin = pusher_prop_blade.create_subgeometry(search_names=["skin_"+str(i)])
@@ -190,7 +216,6 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     # lift_rotor_1_blade = cd.aircraft.components.Rotor(radius=3.048/2.5,geometry=lift_rotor_1_blade_geometry)
     # lift_rotor_1_blade._ffd_block.plot()
 
-    exit()
 
     # Booms
     for i in range(8):

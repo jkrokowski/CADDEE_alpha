@@ -176,7 +176,7 @@ class Blade(Wing):
             self._dependent_geometry_points = [] # {'parametric_points', 'function_space', 'fitting_coords', 'mirror'}
             self._base_geometry = self.geometry.copy()
     
-    def construct_internal_structure(
+    def create_internal_geometry(
             self,
             top_geometry:lg.Geometry,
             bottom_geometry:lg.Geometry,
@@ -186,8 +186,10 @@ class Blade(Wing):
             offset:np.ndarray=np.array([0., 0., .23])
         ):
         '''
-        Construct the internal geometry of the rotor blade based on input 
-        parameters and the upper and lower surfaces of the blade 
+        Constructs the internal geometries (surfaces) of the rotor blade from:
+            spar_locations: number of spar surfaces and percent of chord (0= le, 1 = te)
+            top skin surface geometry
+            bottom skin surface geomtry
         '''
         csdl.check_parameter(spar_locations, "spar_locations", types=np.ndarray, allow_none=True)
         csdl.check_parameter(surf_index, "surf_index", types=int)
@@ -274,7 +276,7 @@ class Blade(Wing):
         fitting_values = self.geometry.evaluate(parametric_points_front)
         coefficients = spar_function_space.fit(fitting_values, fitting_coords)
         front_spar = lfs.Function(spar_function_space, coefficients)
-        front_spar_name="Blade_spar_front"
+        front_spar_name="Blade_spar_front"+str(front_spar_index)
         self._add_geometry(front_spar_index, front_spar, front_spar_name)
 
         #rear spar internal surface
@@ -283,7 +285,7 @@ class Blade(Wing):
         fitting_values = self.geometry.evaluate(parametric_points_rear)
         coefficients = spar_function_space.fit(fitting_values, fitting_coords)
         rear_spar = lfs.Function(spar_function_space, coefficients)
-        rear_spar_name = "Blade_spar_rear"
+        rear_spar_name = "Blade_spar_rear"+str(rear_spar_index)
         self._add_geometry(rear_spar_index, rear_spar, rear_spar_name)
 
         front_spar_geometry = self.create_subgeometry(search_names=front_spar_name)
@@ -311,15 +313,15 @@ class Blade(Wing):
             rear_spar_index =list(rear_spar_geometry.function_names.keys())[0]
         
         #number of parametric points to be evaluated for each surface
-        #TODO: need to get the mapping from parametric spacing to physical spacing
         num_parametric = 500
         u_coords = np.linspace(0,1,num_spanwise)
         v_coords = np.linspace(0,1,num_parametric) # linear spacing doesn't perform well
-        # np.append(0.5-np.logspace(-1,1,num=20)[::-1]/20,0.5)
-        # np.logspace(-1,1,num=20)/20 + 0.5
-        # v_coords = np.concatenate([np.append(0.5-np.logspace(-1,1,num=int(num_parametric/2))[::-1]/20,0.5),
-        #                            np.logspace(-1,1,num=int(num_parametric/2))/20 + 0.5])
-        # num_parametric+=1 #added for 0.5 inserted at center of log parametric pts
+        #TODO: need to get the mapping from parametric spacing to physical spacing
+        #   can get a more even (in physical space) spacing of parametric points by solving
+        #   the inverse parametric mapping problem. This is a nonlinear problem which can be
+        #   formulated as by solving J^T J delta = -J^T r,
+        #   where r = x_parametric(parametric_coords) - x_physical
+        #   until some convergence criterion
 
         xs = []
 
@@ -339,9 +341,9 @@ class Blade(Wing):
            
             #evaluate thicknesses for comparison to radius of curvature
             #TODO: in an optimization run, swap for the design variable upper limit:
-            thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_top).value
+            top_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_top).value
             #get indices where radius of curvature does not exceed thickness
-            valid_top_offset_pts_indices = (np.abs(roc_top) >= thicknesses).nonzero()
+            valid_top_offset_pts_indices = (np.abs(roc_top) >= top_thicknesses).nonzero()
             #restrict offset pts to the valid pts:
             top_pts_offset=top_pts_offset[list(valid_top_offset_pts_indices[0]),:]
             print("num top pts="+str(top_pts.shape[0])+', num offset pts:'+str(top_pts_offset.shape[0]))
@@ -354,9 +356,9 @@ class Blade(Wing):
             print(np.min(np.abs(roc_bot)))
 
             #evaluate thicknesses for comparison to radius of curvature
-            thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_bot).value
+            bot_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_bot).value
             #get indices where radius of curvature does not exceed thickness
-            valid_bot_offset_pts_indices = (np.abs(roc_bot) >= thicknesses).nonzero()
+            valid_bot_offset_pts_indices = (np.abs(roc_bot) >= bot_thicknesses).nonzero()
             #restrict to the valid pts:
             bot_pts_offset=bot_pts_offset[list(valid_bot_offset_pts_indices[0]),:]
             print("num bot pts="+str(bot_pts.shape[0])+', num offset pts:'+str(bot_pts_offset.shape[0]))
@@ -375,7 +377,7 @@ class Blade(Wing):
             #   upper_index < lower_index = te
             #   upper_index > lower_index = le
 
-            intersections = self._trim_offset_pts(top_pts_offset,bot_pts_offset)
+            intersections = self._find_pt_set_intersection(top_pts_offset,bot_pts_offset)
             #depending on the number of intersections, modify the collection of offset points
             if intersections is None:    
                 print("No intersections detected")
@@ -444,7 +446,7 @@ class Blade(Wing):
             
             # self.plot_pts(skin_pts,skin_offset_pts)
             n_thickness = 3
-            approx_mesh_size=np.min(thicknesses)/n_thickness
+            approx_mesh_size_skin=np.min(np.vstack([top_thicknesses,bot_thicknesses]))/n_thickness
 
             #fit a single surface to the outer skin
             skin_surf_name='skin_'+str(i)
@@ -457,7 +459,7 @@ class Blade(Wing):
                                                     skin_offset_pts,
                                                     name=skin_surf_name,
                                                     plot=True,
-                                                    meshsize=approx_mesh_size,
+                                                    meshsize=approx_mesh_size_skin,
                                                     num_boundary_comp=2)
             skin_output = cd.mesh_utils.import_mesh(file=skin_mesh,
                                       component=skin_surf_geometry,
@@ -467,6 +469,48 @@ class Blade(Wing):
             #front spar
             parametric_front_spar = [(front_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             front_spar_pts,front_spar_pts_offset = self._get_pts_and_offset_pts(parametric_front_spar,num_parametric)
+            #trim points off the spar curves that intersect with the inner edge of the skin
+            #   and add the inner surface curve points to construct the edge that is "shared"
+            #   with the skin
+            #   The spar curve itself will always have 2 interesections
+            #   Can have cases with each curve of 0,1,or 2 intersections, so need to be sharp about how to handle these
+            
+            #this is guaranteed to have exactly 2 intersection (based on how it was constructed)
+            front_spar_skin_intersections=self._find_pt_set_intersection(front_spar_pts,skin_offset_pts)
+            front_spar_indices = np.sort([intersection[0] for intersection in front_spar_skin_intersections])
+            front_spar_pts = front_spar_pts[front_spar_indices[0]+1:front_spar_indices[1]]
+            # store the intersections with the skin for trimming the curve
+            skin_indices1 = np.sort([intersection[1] for intersection in front_spar_skin_intersections])
+            
+            # either 0,1,or 2interesections
+            # 2 intersections is fine, how to handle the 0 and 1 cases?
+            front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
+            #if there are not two intersections, locate which ends of the spar offset curve are NOT intersecting,
+            #  then extend them with a straight line in the direction of the last segment
+            if front_spar_offset_skin_intersections is None:
+                #extend the spar offset points by the thickness of the spar
+                print()
+            # spar_edge1 = skin_offset_pts[]
+
+
+
+            front_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_front_spar).value
+
+            #rear spar
+            parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar,num_parametric)
+            rear_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_rear_spar).value
+            
+            rear_spar_skin_intersection=self._find_pt_set_intersection(rear_spar_pts,skin_offset_pts)
+            
+            
+            
+            rear_spar_offset_skin_intersection=self._find_pt_set_intersection(rear_spar_pts_offset,skin_offset_pts)
+
+
+
+            approx_mesh_size_spar=np.min(np.vstack([front_spar_thicknesses,rear_spar_thicknesses]))/n_thickness
+            
             front_spar_surf_name='front_spar_'+str(i)
             front_spar_surf_geometry = self._fit_xs_surface(front_spar_pts,
                                                     front_spar_pts_offset,
@@ -477,13 +521,11 @@ class Blade(Wing):
                                                     front_spar_pts_offset,
                                                     name=front_spar_surf_name,
                                                     plot=True,
-                                                    meshsize=approx_mesh_size)
+                                                    meshsize=approx_mesh_size_spar)
             front_spar_output = cd.mesh_utils.import_mesh(file=front_spar_mesh,
                                       component=front_spar_surf_geometry,
                                       plot=True)
-            #rear spar
-            parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
-            rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar,num_parametric)
+            
             rear_spar_surf_name='rear_spar_'+str(i)
             rear_spar_surf_geometry = self._fit_xs_surface(rear_spar_pts,
                                                     rear_spar_pts_offset,
@@ -494,14 +536,14 @@ class Blade(Wing):
                                                     rear_spar_pts_offset,
                                                     name=rear_spar_surf_name,
                                                     plot=True,
-                                                    meshsize=approx_mesh_size)
+                                                    meshsize=approx_mesh_size_spar)
             rear_spar_output = cd.mesh_utils.import_mesh(file=rear_spar_mesh,
                                       component=rear_spar_surf_geometry,
                                       plot=True)
             
             
 
-            #Construct spar caps by extracting segement of inner offset curve of skin between spar surfaces
+            #Construct spar caps by extracting segment of inner offset curve of skin between spar surfaces
 
             #construct front and rear fill surfaces 
 
@@ -519,7 +561,7 @@ class Blade(Wing):
         plt.grid(True)
         plt.show()
 
-    def _trim_offset_pts(self,pts1,pts2):
+    def _find_pt_set_intersection(self,pts1,pts2):
         """ Return the possible two intersections between the offset curves"""
 
         def line_intersection(p1, p2, p3, p4):
