@@ -479,6 +479,17 @@ class Blade(Wing):
             front_spar_skin_intersections=self._find_pt_set_intersection(front_spar_pts,skin_offset_pts)
             front_spar_indices = np.sort([intersection[0] for intersection in front_spar_skin_intersections])
             front_spar_pts = front_spar_pts[front_spar_indices[0]+1:front_spar_indices[1]]
+
+            #add the intersection point to the front spar points:
+            y_value = front_spar_pts[0,1].value[0]
+            top_intersection_pt = np.array([[front_spar_skin_intersections[0][2][0],
+                                            y_value,
+                                            front_spar_skin_intersections[0][2][1]]])
+            bot_intersection_pt = np.array([[front_spar_skin_intersections[1][2][0],
+                                            y_value,
+                                            front_spar_skin_intersections[1][2][1]]])
+            front_spar_pts = csdl.concatenate([top_intersection_pt,front_spar_pts,bot_intersection_pt])
+
             # store the intersections with the skin for trimming the curve
             skin_indices1 = np.sort([intersection[1] for intersection in front_spar_skin_intersections])
             
@@ -489,43 +500,65 @@ class Blade(Wing):
             #  then extend them with a straight line in the direction of the last segment
             front_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_front_spar).value
             
-            #evaluate 
+            #evaluate normals and thicknesses for spar
             front_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness([parametric_front_spar[0],parametric_front_spar[-1]])
             front_spar_ext_normal = self.geometry.evaluate_normals([parametric_front_spar[0],parametric_front_spar[-1]])
+            
+            #TODO: write a helper function that rotates a vector to be inplane
             if front_spar_offset_skin_intersections is None:
-                #extend the spar offset points by the thickness of the spar (both upper and lower)
-                #upper edge:
-                print()
+                #extend the spar offset points in the tangent direction of the offset
+                #  points by using the wingskin surface tangent 
+
+                #===== UPPER EDGE =======#
+
                 #evaluate front spar point, project to top surface, then evaluate derivative at that location
                 tangent_vec = top_geometry.evaluate(
                                 top_geometry.project(
                                         self.geometry.evaluate([parametric_front_spar[0]])
-                                            ),parametric_derivative_orders=(0,1),plot=True)
+                                            ),parametric_derivative_orders=(0,1))
                 tangent_vec /= csdl.norm(tangent_vec) #normalize
-                scale = 1/csdl.sqrt(1-front_spar_ext_normal[:,1]**2)
-                # adjustment = tcsdl.expand(scale,front_spar_ext_normal.shape,'i->ij')
-                adjustment=csdl.vstack([scale,np.zeros(scale.shape),scale]).T() #zero out y axis
-                front_spar_ext_normal_inplane = front_spar_ext_normal * adjustment
 
+                #
+                def rotate_oblique(vec,axis=1):
+                    scale = 1/csdl.sqrt(1-front_spar_ext_normal[:,axis]**2)
+                    if axis==0:
+                        adjustment=csdl.vstack([np.zeros(scale.shape),scale,scale]).T() #zero out x axis
+                    elif axis==1:
+                        adjustment=csdl.vstack([scale,np.zeros(scale.shape),scale]).T() #zero out y axis
+                    elif axis==2:
+                        adjustment=csdl.vstack([scale,scale,np.zeros(scale.shape)]).T() #zero out z axis
+                    return vec*adjustment
+                front_spar_ext_normal_inplane = rotate_oblique(front_spar_ext_normal)
+
+                #TODO: use csdl operations
                 #get projection:
-                front_spar_ext_normal_inplane[0,:].value @ tangent_vec.value * tangent_vec.value 
-                t = front_spar_ext_thickness[0].value * front_spar_ext_normal_inplane.value
-                T = tangent_vec.value
-                n = front_spar_ext_normal_inplane.value[0]
-                x = np.dot(n,T)
-                e = (np.sqrt(1-x**2)/x) * n[[2,1,0]]*np.array([-1,0,1])
-                top_geometry.plot()
-                ext_pt = front_spar_pts_offset[0] + front_spar_ext_thickness[0]*e
-                # ext_pt = front_spar_pts_offset[0] + e
+                T = tangent_vec.value #wingskin tangent
+                n = front_spar_ext_normal_inplane.value[0] #spar offset direction (spar surface normal)
+                x = np.dot(n,T) #cos(angle between n and T)
+                e = (np.sqrt(1-x**2)/x) * n[[2,1,0]]*np.array([-1,0,1]) #get vector for extending spar: tan^-1(cos(angle between n and T))
+                ext_pt = front_spar_pts_offset[0] + front_spar_ext_thickness[0]*e #new extended spar offset point
+                
+                # #get point for extending the offset spar surface:
+                # skin_tangent = 'blah'
+                # skin_tangent /= csdl.norm(skin_tangent) #normalize
 
+                # self._get_extension_point(skin_tangent,spar_normal)
+
+                #add the extended point to the offset points array
                 front_spar_pts_offset = csdl.concatenate([ext_pt.reshape((1,3)),front_spar_pts_offset])
-                # (t[0] @ T) / (t[0] @t[0] ) * t[0]             
-                # ext_pt_top = tangent_vec[2]/tangent_vec[0] * front_spar_ext_thickness
+                #find the intersection between that and the skin offset pts:
+                front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
+                
+                top_intersection_pt = np.array([[front_spar_offset_skin_intersections[0][2][0],
+                                            y_value,
+                                            front_spar_offset_skin_intersections[0][2][1]]])
+                
+                #get new spar offset points:
+                front_spar_pts_offset = csdl.concatenate([top_intersection_pt,front_spar_pts_offset[front_spar_offset_skin_intersections[0][0]+1:]])
 
-                pt = self.geometry.evaluate([parametric_front_spar[0]]).value[[0,2]]
-                vecs = [t[0][[0,2]],T[[0,2]]]
-                self.plot_vecs(pt,vecs,['Red','Blue'])
-                print()
+                # pt = self.geometry.evaluate([parametric_front_spar[0]]).value[[0,2]]
+                # vecs = [t[0][[0,2]],T[[0,2]]]
+                # self.plot_vecs(pt,vecs,['Red','Blue'])
 
             elif len(front_spar_offset_skin_intersections) == 1:
                 #extend the spar offset points by the thickness of the spar (either upper and lower)
@@ -535,23 +568,18 @@ class Blade(Wing):
                 front_spar_offset_indices = np.sort([intersection[0] for intersection in front_spar_offset_skin_intersections])
                 front_spar_pts_offset = front_spar_pts_offset[front_spar_offset_indices[0]+1:front_spar_offset_indices[1]]
                 
-            # spar_edge1 = skin_offset_pts[]
-
-
             #rear spar
             parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar)
             rear_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_rear_spar).value
             
             rear_spar_skin_intersection=self._find_pt_set_intersection(rear_spar_pts,skin_offset_pts)
-            
-            
-            
+                        
             rear_spar_offset_skin_intersection=self._find_pt_set_intersection(rear_spar_pts_offset,skin_offset_pts)
 
 
-            n_thickness_spar = 4
-            approx_mesh_size_spar=np.min(np.vstack([front_spar_thicknesses,rear_spar_thicknesses]))/
+            n_thickness_spar = 5
+            approx_mesh_size_spar=np.min(np.vstack([front_spar_thicknesses,rear_spar_thicknesses]))/n_thickness_spar
             
             front_spar_surf_name='front_spar_'+str(i)
             front_spar_surf_geometry = self._fit_xs_surface(front_spar_pts,
