@@ -333,7 +333,7 @@ class Blade(Wing):
             #TOP SURFACE:
             print(f'Section {i}/{num_spanwise}')
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
-            top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top,num_parametric)
+            top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top)
             roc_top = self._get_roc(parametric_top)
 
             print('Top Min. RoC:')
@@ -350,7 +350,7 @@ class Blade(Wing):
 
             #BOTTOM SURFACE:
             parametric_bot = [(bot_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
-            bot_pts,bot_pts_offset = self._get_pts_and_offset_pts(parametric_bot,num_parametric)
+            bot_pts,bot_pts_offset = self._get_pts_and_offset_pts(parametric_bot)
             roc_bot = self._get_roc(parametric_bot)
             print('Bottom Min. RoC:')
             print(np.min(np.abs(roc_bot)))
@@ -468,14 +468,14 @@ class Blade(Wing):
             #Constuct front and rear spar sections (e.g. meshes from offsetting spar surfaces)
             #front spar
             parametric_front_spar = [(front_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
-            front_spar_pts,front_spar_pts_offset = self._get_pts_and_offset_pts(parametric_front_spar,num_parametric)
+            front_spar_pts,front_spar_pts_offset = self._get_pts_and_offset_pts(parametric_front_spar)
             #trim points off the spar curves that intersect with the inner edge of the skin
             #   and add the inner surface curve points to construct the edge that is "shared"
             #   with the skin
             #   The spar curve itself will always have 2 interesections
             #   Can have cases with each curve of 0,1,or 2 intersections, so need to be sharp about how to handle these
             
-            #this is guaranteed to have exactly 2 intersection (based on how it was constructed)
+            #this is guaranteed to have exactly 2 intersections (based on how it was constructed)
             front_spar_skin_intersections=self._find_pt_set_intersection(front_spar_pts,skin_offset_pts)
             front_spar_indices = np.sort([intersection[0] for intersection in front_spar_skin_intersections])
             front_spar_pts = front_spar_pts[front_spar_indices[0]+1:front_spar_indices[1]]
@@ -487,18 +487,60 @@ class Blade(Wing):
             front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
             #if there are not two intersections, locate which ends of the spar offset curve are NOT intersecting,
             #  then extend them with a straight line in the direction of the last segment
+            front_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_front_spar).value
+            
+            #evaluate 
+            front_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness([parametric_front_spar[0],parametric_front_spar[-1]])
+            front_spar_ext_normal = self.geometry.evaluate_normals([parametric_front_spar[0],parametric_front_spar[-1]])
             if front_spar_offset_skin_intersections is None:
-                #extend the spar offset points by the thickness of the spar
+                #extend the spar offset points by the thickness of the spar (both upper and lower)
+                #upper edge:
                 print()
+                #evaluate front spar point, project to top surface, then evaluate derivative at that location
+                tangent_vec = top_geometry.evaluate(
+                                top_geometry.project(
+                                        self.geometry.evaluate([parametric_front_spar[0]])
+                                            ),parametric_derivative_orders=(0,1),plot=True)
+                tangent_vec /= csdl.norm(tangent_vec) #normalize
+                scale = 1/csdl.sqrt(1-front_spar_ext_normal[:,1]**2)
+                # adjustment = tcsdl.expand(scale,front_spar_ext_normal.shape,'i->ij')
+                adjustment=csdl.vstack([scale,np.zeros(scale.shape),scale]).T() #zero out y axis
+                front_spar_ext_normal_inplane = front_spar_ext_normal * adjustment
+
+                #get projection:
+                front_spar_ext_normal_inplane[0,:].value @ tangent_vec.value * tangent_vec.value 
+                t = front_spar_ext_thickness[0].value * front_spar_ext_normal_inplane.value
+                T = tangent_vec.value
+                n = front_spar_ext_normal_inplane.value[0]
+                x = np.dot(n,T)
+                e = (np.sqrt(1-x**2)/x) * n[[2,1,0]]*np.array([-1,0,1])
+                top_geometry.plot()
+                ext_pt = front_spar_pts_offset[0] + front_spar_ext_thickness[0]*e
+                # ext_pt = front_spar_pts_offset[0] + e
+
+                front_spar_pts_offset = csdl.concatenate([ext_pt.reshape((1,3)),front_spar_pts_offset])
+                # (t[0] @ T) / (t[0] @t[0] ) * t[0]             
+                # ext_pt_top = tangent_vec[2]/tangent_vec[0] * front_spar_ext_thickness
+
+                pt = self.geometry.evaluate([parametric_front_spar[0]]).value[[0,2]]
+                vecs = [t[0][[0,2]],T[[0,2]]]
+                self.plot_vecs(pt,vecs,['Red','Blue'])
+                print()
+
+            elif len(front_spar_offset_skin_intersections) == 1:
+                #extend the spar offset points by the thickness of the spar (either upper and lower)
+                #need logic to find if the lack of intersection is upper or lower
+                print("one intersection! ")
+            elif len(front_spar_offset_skin_intersections) == 2:
+                front_spar_offset_indices = np.sort([intersection[0] for intersection in front_spar_offset_skin_intersections])
+                front_spar_pts_offset = front_spar_pts_offset[front_spar_offset_indices[0]+1:front_spar_offset_indices[1]]
+                
             # spar_edge1 = skin_offset_pts[]
 
 
-
-            front_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_front_spar).value
-
             #rear spar
             parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
-            rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar,num_parametric)
+            rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar)
             rear_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_rear_spar).value
             
             rear_spar_skin_intersection=self._find_pt_set_intersection(rear_spar_pts,skin_offset_pts)
@@ -508,8 +550,8 @@ class Blade(Wing):
             rear_spar_offset_skin_intersection=self._find_pt_set_intersection(rear_spar_pts_offset,skin_offset_pts)
 
 
-
-            approx_mesh_size_spar=np.min(np.vstack([front_spar_thicknesses,rear_spar_thicknesses]))/n_thickness
+            n_thickness_spar = 4
+            approx_mesh_size_spar=np.min(np.vstack([front_spar_thicknesses,rear_spar_thicknesses]))/
             
             front_spar_surf_name='front_spar_'+str(i)
             front_spar_surf_geometry = self._fit_xs_surface(front_spar_pts,
@@ -551,6 +593,53 @@ class Blade(Wing):
             
                     
         # self.geometry.plot(opacity=0.5)
+    def plot_vecs(self,origin, vectors, colors=None):
+        """
+        Plot 2D vectors and their unit vectors from a common origin.
+
+        Parameters:
+        - origin: tuple or np.array of shape (2,)
+        - vectors: list of np.array of shape (2,)
+        - colors: list of colors for each vector (optional)
+        """
+        origin = np.array(origin)
+        vectors = np.array(vectors)
+        n = len(vectors)
+
+        if colors is None:
+            colors = ['r'] * n  # default to red
+
+        plt.figure()
+        ax = plt.gca()
+
+        for i, v in enumerate(vectors):
+            norm = np.linalg.norm(v)
+            unit_v = v / norm if norm != 0 else np.zeros_like(v)
+
+            # Plot original vector
+            ax.quiver(*origin, *v, angles='xy', scale_units='xy', scale=1, color=colors[i], width=0.005, label=f'vec {i}')
+            label_pos = origin + 0.9 * v
+            ax.text(label_pos[0], label_pos[1], f'{norm:.2f}', fontsize=9, ha='center', va='center', color=colors[i])
+
+            # Plot unit vector with dashed arrow
+            ax.quiver(*origin, *unit_v, angles='xy', scale_units='xy', scale=1, color=colors[i],
+                    linestyle='dashed', alpha=0.5, width=0.003)
+            unit_label_pos = origin + 0.9 * unit_v
+            ax.text(unit_label_pos[0], unit_label_pos[1], f'û{i}', fontsize=8, ha='center', va='center', color=colors[i], alpha=0.7)
+
+        # Plot settings
+        max_len = max(np.linalg.norm(v) for v in vectors)
+        buffer = 1.0
+        plt.xlim(origin[0] - buffer, origin[0] + max_len + buffer)
+        plt.ylim(origin[1] - buffer, origin[1] + max_len + buffer)
+        ax.set_aspect('equal')
+        plt.grid(True)
+        plt.title(f'Vectors and Unit Vectors from {tuple(origin)}')
+        plt.xlabel('X')
+        plt.ylabel('Y')
+        plt.legend()
+        plt.show()
+
 
     def plot_pts(self,pts,offset_pts):
         plt.figure(figsize=(8, 6))
@@ -616,27 +705,40 @@ class Blade(Wing):
         return roc
          
                 
-    def _get_pts_and_offset_pts(self,parametric_pts,num_parametric):
+    def _get_pts_and_offset_pts(self,parametric_pts):
+        ''' 
+        Offset a set of points on a curve by the thickness assigned in the geometry
+        parametric_pts: list of tuples of (surf_id, array(parametric_x,parametric_y))
+        '''
+        #TODO: make sure that the correct axial coordinate is added back to the final offset
+        #       (not just zeros)
+        #TODO: adjust to accomodate an arbitrary rotor axis via dot product with a specified axis
+        #       (not just always assuming the y-axis, like at the moment is done)
+        num_points = len(parametric_pts)
         pts = self.geometry.evaluate(parametric_pts, plot=False)
         normals = self.geometry.evaluate_normals(parametric_pts,plot=False)
         thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_pts)
 
-        #perfom adjustment of out of plane normal
+        #perfom adjustment of in-plane normals to increase inplane thicknesses as req'd
         offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
 
+        #get inplane normals
         normals_inplane = (normals@(np.array([[1,0,0],[0,0,1]])).T)
 
+        #offset inplane points by the inplane offset thickness
         #broadcasting vector to matrix not working well in csdl, so have to use expand
         offsets_inplane = normals_inplane* csdl.expand(offset_thicknesses,
                                                             normals_inplane.shape,
                                                             'i->ij')
-        offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_parametric,1)),
-                                        np.zeros((num_parametric,1)),
-                                        offsets_inplane[:,1].value.reshape((num_parametric,1))],
+        
+        #add back the axial coordinate
+        offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_points,1)),
+                                        np.zeros((num_points,1)),
+                                        offsets_inplane[:,1].value.reshape((num_points,1))],
                                         axis=1)
         offset_pts = ( pts + offsets)
         return pts,offset_pts
-    
+        
     def _fit_xs_surface(self,pts,offset_pts,xs_surf_name,num_parametric):
         num_through_thickness = 2 #this is the number of ctl pts to fit the surface
         # lfs.BSplineSpace(2, (1, 1), (num_spanwise, 2))
