@@ -193,6 +193,8 @@ class Blade(Wing):
         '''
         csdl.check_parameter(spar_locations, "spar_locations", types=np.ndarray, allow_none=True)
         csdl.check_parameter(surf_index, "surf_index", types=int)
+        
+        #TODO: add a parameter to specify at what spanwise coordinate the spar should terminate (usually something like 85-90% of span)
 
         # Check if spar and rib locations are between 0 and 1
         if spar_locations is not None:
@@ -280,7 +282,8 @@ class Blade(Wing):
         self._add_geometry(front_spar_index, front_spar, front_spar_name)
 
         #rear spar internal surface
-        parametric_points_rear = spar_top_rear.tolist()+spar_bot_rear.tolist()
+        # parametric_points_rear = spar_top_rear.tolist()+spar_bot_rear.tolist()
+        parametric_points_rear = spar_bot_rear.tolist()+spar_top_rear.tolist() #fit surface the other direction to ensure normal offset direction offsets spar box inward
         fitting_coords = np.array([[u, 0] for u in u_coords] + [[u, 1] for u in u_coords])
         fitting_values = self.geometry.evaluate(parametric_points_rear)
         coefficients = spar_function_space.fit(fitting_values, fitting_coords)
@@ -323,11 +326,15 @@ class Blade(Wing):
         #   where r = x_parametric(parametric_coords) - x_physical
         #   until some convergence criterion
 
+        #TODO: use a coordinate transform to ensure that the meshing is always handled in xy-plane,
+        #   then re-map back to physical space after computing the section meshes?
+        #   Currently, this meshing only works if the rotor blade has it's beam axis directly along the y-axis
+
         xs = []
 
         for i,u_coord in enumerate(u_coords):            
             #NEED TO USE A CONSTANT AXIAL COORDINATE TO PREVENT MESHING ISSUES ASSOCIATED WITH FITTING PLANAR SURFACES
-            #TODO: update this later to use multiple surfaces?
+            #NOTE: if you want to evaluate the 
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             axial_coord = np.average(self.geometry.evaluate(parametric_top).value[:,1])
 
@@ -475,10 +482,9 @@ class Blade(Wing):
             parametric_front_spar = [(front_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             front_spar_pts,front_spar_pts_offset = self._get_pts_and_offset_pts(parametric_front_spar)
             #trim points off the spar curves that intersect with the inner edge of the skin
-            #   and add the inner surface curve points to construct the edge that is "shared"
-            #   with the skin
+            #   and add the inner surface curve points to construct the edge that is "shared" with the skin
             #   The spar curve itself will always have 2 interesections
-            #   Can have cases with each curve of 0,1,or 2 intersections, so need to be sharp about how to handle these
+            #   Can have cases with the offset spar curve and skin offset have 0,1,or 2 intersections
             
             #this is guaranteed to have exactly 2 intersections (based on how it was constructed)
             front_spar_skin_intersections=self._find_pt_set_intersection(front_spar_pts,skin_offset_pts)
@@ -525,13 +531,6 @@ class Blade(Wing):
 
                 front_spar_ext_normal_inplane = rotate_oblique(front_spar_ext_normal)
 
-                # #TODO: use csdl operations
-                # T = tangent_vec.value #wingskin tangent
-                # n = front_spar_ext_normal_inplane.value[0] #spar offset direction (spar surface normal)
-                # x = np.dot(n,T) #cos(angle between n and T)
-                # e = (np.sqrt(1-x**2)/x) * n[[2,1,0]]*np.array([-1,0,1]) #get vector for extending spar: tan^-1(cos(angle between n and T))
-                # ext_pt = front_spar_pts_offset[0] + front_spar_ext_thickness[0]*e #new extended spar offset point
-                
                 #get extension points
                 #===== UPPER EDGE =======#
                 e_top = get_extension_vector(tangent_vec[0],front_spar_ext_normal_inplane[0])
@@ -561,9 +560,6 @@ class Blade(Wing):
                 print("two intersections!")
                 #No need to do anything here, carry on
 
-                # front_spar_offset_indices = np.sort([intersection[0] for intersection in front_spar_offset_skin_intersections])
-                # front_spar_pts_offset = front_spar_pts_offset[front_spar_offset_indices[0]+1:front_spar_offset_indices[1]]
-            
             #modify the offset spar points to include the intersection point between that curve and the skin offset curve
             top_intersection_pt_front_offset = np.array([[front_spar_offset_skin_intersections[0][2][0],
                                                             y_value,
@@ -610,13 +606,12 @@ class Blade(Wing):
             #                                         num_parametric)
             # front_spar_surf_geometry.plot(opacity=0.75)
 
-            #TODO: mesh this as a loop of connected b-splines, instead of just straight lines along the edges
             front_spar_mesh = self._mesh_curve_loop([front_spar_pts,
                                                      front_spar_bot_pts,#provided ordered from front spar --> offset
                                                      front_spar_pts_offset[::-1],#reverse to ensure proper curve loop direction
                                                      front_spar_top_pts],#provided ordered from front spar --> offset
                                                      name=front_spar_surf_name,
-                                                     plot=True,
+                                                     plot=False,
                                                      meshsize=approx_mesh_size_front_spar)
             # front_spar_mesh = self._mesh_curve_and_offset(front_spar_pts,
             #                                         front_spar_pts_offset,
@@ -627,24 +622,136 @@ class Blade(Wing):
             #                           component=front_spar_surf_geometry,
             #                           plot=True)
             
-            # #rear spar
-            # parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
-            # rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar)
-            # rear_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_rear_spar).value
+            #========== REAR SPAR CONSTRUCTION ==========#
+            parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar)
+            #trim points off the spar curves that intersect with the inner edge of the skin
+            #   and add the inner surface curve points to construct the edge that is "shared" with the skin
+            #   The spar curve itself will always have 2 interesections
+            #   Can have cases with the offset spar curve and skin offset have 0,1,or 2 intersections
             
-            # rear_spar_skin_intersection=self._find_pt_set_intersection(rear_spar_pts,skin_offset_pts)
-                        
-            # rear_spar_offset_skin_intersection=self._find_pt_set_intersection(rear_spar_pts_offset,skin_offset_pts)
-            
-            # n_thickness_rear_spar = 5
-            # approx_mesh_size_rear_spar=np.min(rear_spar_thicknesses)/n_thickness_rear_spar
+            #this is guaranteed to have exactly 2 intersections (based on how it was constructed)
+            rear_spar_skin_intersections=self._find_pt_set_intersection(rear_spar_pts,skin_offset_pts)
+            rear_spar_indices = np.sort([intersection[0] for intersection in rear_spar_skin_intersections])
+            rear_spar_pts = rear_spar_pts[rear_spar_indices[0]+1:rear_spar_indices[1]]
 
-            # rear_spar_surf_name='rear_spar_'+str(i)
+            #add the intersection point to the rear spar points:
+            y_value = rear_spar_pts[0,1].value[0]
+            top_intersection_pt_rear = np.array([[rear_spar_skin_intersections[0][2][0],
+                                            y_value,
+                                            rear_spar_skin_intersections[0][2][1]]])
+            bot_intersection_pt_rear = np.array([[rear_spar_skin_intersections[1][2][0],
+                                            y_value,
+                                            rear_spar_skin_intersections[1][2][1]]])
+            rear_spar_pts = csdl.concatenate([top_intersection_pt_rear,
+                                               rear_spar_pts,
+                                               bot_intersection_pt_rear])
+
+            # store the intersections with the skin for trimming the curve
+            skin_indices_rear = np.sort([intersection[1] for intersection in rear_spar_skin_intersections])
+            
+            # either 0,1,or 2interesections
+            rear_spar_offset_skin_intersections=self._find_pt_set_intersection(rear_spar_pts_offset,skin_offset_pts)
+            rear_spar_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_rear_spar).value
+            
+            #if there are not two intersections, locate which ends of the spar offset curve are NOT intersecting,
+            #  then extend them with a straight line in the direction of the last segment
+            if rear_spar_offset_skin_intersections is None:
+                print("no intersections!")
+                #extend the spar offset points in the tangent direction of the offset
+                #  points by using the wingskin surface tangent 
+
+                #evaluate normals and thicknesses for spar points
+                spar_skin_pts = [parametric_rear_spar[0],parametric_rear_spar[-1]]
+                rear_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness(spar_skin_pts)
+                rear_spar_ext_normal = self.geometry.evaluate_normals(spar_skin_pts)
+                
+                #evaluate rear spar point, project to top surface, then evaluate derivative at that location
+                tangent_vec = top_geometry.evaluate(
+                                top_geometry.project(
+                                        self.geometry.evaluate(spar_skin_pts)
+                                            ),parametric_derivative_orders=(0,1))
+                tangent_vec /= csdl.norm(tangent_vec) #normalize
+
+                rear_spar_ext_normal_inplane = rotate_oblique(rear_spar_ext_normal)
+
+                #get extension points
+                #===== UPPER EDGE =======#
+                e_top = get_extension_vector(tangent_vec[0],rear_spar_ext_normal_inplane[0])
+                ext_pt_top = rear_spar_pts_offset[0] + rear_spar_ext_thickness[0]*e_top 
+                #===== LOWER EDGE =======#
+                e_bot = get_extension_vector(tangent_vec[1],rear_spar_ext_normal_inplane[1])
+                ext_pt_bot = rear_spar_pts_offset[1] + rear_spar_ext_thickness[1]*e_bot
+
+                #add the extended points to the offset points array
+                rear_spar_pts_offset = csdl.concatenate([ext_pt_top.reshape((1,3)),
+                                                          rear_spar_pts_offset,
+                                                          ext_pt_bot.reshape((1,3))])
+                #find the intersection between that and the skin offset pts:
+                rear_spar_offset_skin_intersections=self._find_pt_set_intersection(rear_spar_pts_offset,skin_offset_pts)
+
+
+            elif len(rear_spar_offset_skin_intersections) == 1:
+                print("one intersection! ")
+
+                #identify which end point is lacking an intersection
+
+                #extend the offset curve in that direction
+
+                #recompute the offset curve intersections (especially if the missing intersection was on the top, as that means subsequent indices would need to get adjusted)
+
+            elif len(rear_spar_offset_skin_intersections) == 2:
+                print("two intersections!")
+                #No need to do anything here, carry on
+
+            #modify the offset spar points to include the intersection point between that curve and the skin offset curve
+            top_intersection_pt_rear_offset = np.array([[rear_spar_offset_skin_intersections[0][2][0],
+                                                            y_value,
+                                                            rear_spar_offset_skin_intersections[0][2][1]]])
+            bot_intersection_pt_rear_offset = np.array([[rear_spar_offset_skin_intersections[1][2][0],
+                                        y_value,
+                                        rear_spar_offset_skin_intersections[1][2][1]]])
+            #get new spar offset points:
+            rear_spar_pts_offset = csdl.concatenate([top_intersection_pt_rear_offset,
+                                                        rear_spar_pts_offset[rear_spar_offset_skin_intersections[0][0]+1:rear_spar_offset_skin_intersections[1][0]],
+                                                        bot_intersection_pt_rear_offset])
+            #indices of the offset spar 
+            skin_indices_rear_offset = np.sort([intersection[1] for intersection in rear_spar_offset_skin_intersections])
+            
+            #pts for the upper spar curve:
+            rear_spar_top_pts = csdl.concatenate([top_intersection_pt_rear_offset,
+                                                    skin_offset_pts[skin_indices_rear_offset[0]+1:skin_indices_rear[0]],
+                                                    top_intersection_pt_rear])
+            #pts for the lower spar curve:
+            rear_spar_bot_pts = csdl.concatenate([bot_intersection_pt_rear,
+                                                    skin_offset_pts[skin_indices_rear[1]+1:skin_indices_rear_offset[1]],
+                                                    bot_intersection_pt_rear_offset])
+
+            #set a consistent axial coordinate
+            set_axial_value(rear_spar_top_pts,axial_coord)
+            set_axial_value(rear_spar_bot_pts,axial_coord)            
+            set_axial_value(rear_spar_pts,axial_coord)            
+            set_axial_value(rear_spar_pts_offset,axial_coord)            
+
+            n_thickness_rear_spar = 5
+            approx_mesh_size_rear_spar=np.min(rear_spar_thicknesses)/n_thickness_rear_spar
+
+            
+            rear_spar_surf_name='rear_spar_'+str(i)
+            #TODO: need new surface fitting to account for the curve at the top and bottom skin
             # rear_spar_surf_geometry = self._fit_xs_surface(rear_spar_pts,
             #                                         rear_spar_pts_offset,
             #                                         rear_spar_surf_name,
             #                                         num_parametric)
             # rear_spar_surf_geometry.plot(opacity=0.75)
+
+            rear_spar_mesh = self._mesh_curve_loop([rear_spar_pts,
+                                                     rear_spar_bot_pts,#provided ordered from rear spar --> offset
+                                                     rear_spar_pts_offset[::-1],#reverse to ensure proper curve loop direction
+                                                     rear_spar_top_pts],#provided ordered from rear spar --> offset
+                                                     name=rear_spar_surf_name,
+                                                     plot=False,
+                                                     meshsize=approx_mesh_size_rear_spar)
             # rear_spar_mesh = self._mesh_curve_and_offset(rear_spar_pts,
             #                                         rear_spar_pts_offset,
             #                                         name=rear_spar_surf_name,
@@ -654,11 +761,53 @@ class Blade(Wing):
             #                           component=rear_spar_surf_geometry,
             #                           plot=True)
             
+            #========== TOP SPAR CAP CONSTRUCTION ==========#
+            top_spar_pts = skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]]
+            #TODO: evaluate radius of curvature for skin+spar offset thickness and 
+            #       tag normals appropriately to prevent self-intersections
+
+
+            #offset operation needs normals evaluated on the skin to perform the offset
+            top_to_top_spar_offset_pts_indices = valid_top_offset_pts_indices[0][skin_indices_rear[0]+1:skin_indices_front[0]]
+            parametric_top_spar_valid_offset = [parametric_top[indx] for indx in top_to_top_spar_offset_pts_indices]
+            top_spar_normals = self.geometry.evaluate_normals(parametric_top_spar_valid_offset,plot=False)
+
+            top_spar_normals_inplane = rotate_oblique(top_spar_normals)
+                        
+            top_spar_offset_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_top_spar_valid_offset)
+
+            top_spar_offsets_inplane = top_spar_normals_inplane* csdl.expand(top_spar_offset_thicknesses,
+                                                            top_spar_normals_inplane.shape,
+                                                            'i->ij')
             
+            top_spar_pts_offset = top_spar_pts + top_spar_offsets_inplane
 
-            #Construct spar caps by extracting segment of inner offset curve of skin between spar surfaces
+            top_spar_surf_name='top_spar_'+str(i)
+            self._mesh_curve_and_offset(top_spar_pts,
+                                            top_spar_pts_offset,
+                                            name=top_spar_surf_name,
+                                            plot=True,
+                                            meshsize=approx_mesh_size_skin)
 
-            #construct front and rear fill surfaces 
+
+
+            #TODO:append intersection pts onto top spar pts, need to also project onto skin, get normal,
+            #        evaluate offset feasibility,
+            top_intersection_pt_front
+            top_intersection_pt_rear
+            
+            #========== FRONT FILL CONSTRUCTION ==========#
+            front_skin_offset_segment = csdl.concatenate([top_intersection_pt_front,
+                                                    skin_offset_pts[skin_indices_front[0]+1:skin_indices_front[1]],
+                                                    bot_intersection_pt_front])
+            set_axial_value(front_skin_offset_segment,axial_coord) #ensure all axial coordinates match
+
+            front_fill_surf_name = 'front_fill_'+str(i)
+            front_fill_mesh = self._mesh_curve_loop([front_skin_offset_segment,
+                                                     front_spar_pts],
+                                                     name=front_fill_surf_name,
+                                                     plot=True,
+                                                     meshsize=approx_mesh_size_rear_spar)
 
             #construct balance mass surface?
             
@@ -1047,6 +1196,12 @@ def rotate_oblique(vec,axis=1):
         adjustment=csdl.vstack([scale,scale,np.zeros(scale.shape)]).T() #zero out z axis
     return vec*adjustment
 
+#Set a consistent value for all spar surface curves:
+def set_axial_value(vec,val):
+    vec.set_value(np.vstack([vec[:,0].value,
+                                np.ones_like(vec[:,1].value)*val,
+                                vec[:,2].value]).T)
+    return
             # top_surf_xs.project
             # in progress
             # stacked_pts = #top_pts and top_pts_offset (make a variable )

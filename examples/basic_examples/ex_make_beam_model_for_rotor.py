@@ -131,6 +131,13 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     skin_thickneses=skin_thickness*np.ones((len(skin_indices),1))
     skin_coeffs,skin_fxn_set = skin_t_fxn_space.initialize_function(1,skin_thickneses)
 
+    #create functionspaces for spar for spar caps
+    #TODO: change this to a conditional functionspace based on spar locations
+    spar_cap_t_fxn_space = pusher_prop_skin_geometry.create_parallel_space(fxn_space)
+    spar_cap_thickness = 0.005
+    spar_cap_thickneses=spar_cap_thickness*np.ones((len(skin_indices),1))
+    spar_cap_coeffs,spar_cap_fxn_set = spar_cap_t_fxn_space.initialize_function(1,spar_cap_thickneses)
+
     #create functionspaces for spar 
     spar_t_fxn_space = pusher_prop_spar_geometry.create_parallel_space(fxn_space)
     spar_thickness = 0.005
@@ -153,16 +160,35 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         thickness=skin_fxn_set,
         surface_indices=skin_indices
     )
+
+    pusher_prop_blade.quantities.material_properties.add_material(
+        material=aluminum,
+        thickness=spar_cap_fxn_set,
+        surface_indices=skin_indices
+    )
     
     pusher_prop_blade.quantities.material_properties.add_material(
         material=aluminum,
         thickness=spar_fxn_set,
         surface_indices=spar_indices
     )
-    
-    #TODO: break this function into a few separate parts
+    #========== HOW TO EVALUATE SEPARATE THICKNESSES FOR THE SKIN AND SPAR CAP ========#
+    #we want to use the .evaluate_stack() command, but there is an issue with this function
+    #we can make a mod to this function, in the var_groups in utils --> struct_utils:
+    #A sketch (look at .evaluate_thickness for a good template)
+    #get the material stack for a given surface:
+    material_stack = pusher_prop_blade.quantities.material_properties.get_material_stack(174)
+
+    #CRITICAL: convert parametric coordinate to np.array, will not work without doing this:
+    parametric_coords = np.array(parametric_coords, dtype='O,O')
+    #TODO: Q: how does this need to be returned? --> A: as a csdl variable (array)
+    material_thickness = [] #swap for 
+    for material in material_stack:
+        material_thickness = material['thickness'].evaluate(parametric_coords)
+        material_thicknesses.append(material_thickness)
 
     #construct the surfaces for each cross-section
+    #TODO: break this function into a few separate parts
     pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
                                             bottom_geometry=bottom_geometry,
                                             front_spar_geometry=front_spar_geometry, 
