@@ -172,20 +172,20 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         thickness=spar_fxn_set,
         surface_indices=spar_indices
     )
-    #========== HOW TO EVALUATE SEPARATE THICKNESSES FOR THE SKIN AND SPAR CAP ========#
-    #we want to use the .evaluate_stack() command, but there is an issue with this function
-    #we can make a mod to this function, in the var_groups in utils --> struct_utils:
-    #A sketch (look at .evaluate_thickness for a good template)
-    #get the material stack for a given surface:
+    # #========== HOW TO EVALUATE SEPARATE THICKNESSES FOR THE SKIN AND SPAR CAP ========#
+    # #we want to use the .evaluate_stack() command, but there is an issue with this function
+    # #we can make a mod to this function, in the var_groups in utils --> struct_utils:
+    # #A sketch (look at .evaluate_thickness for a good template)
+    # #get the material stack for a given surface:
     material_stack = pusher_prop_blade.quantities.material_properties.get_material_stack(174)
 
-    #CRITICAL: convert parametric coordinate to np.array, will not work without doing this:
-    parametric_coords = np.array(parametric_coords, dtype='O,O')
-    #TODO: Q: how does this need to be returned? --> A: as a csdl variable (array)
-    material_thickness = [] #swap for 
-    for material in material_stack:
-        material_thickness = material['thickness'].evaluate(parametric_coords)
-        material_thicknesses.append(material_thickness)
+    # #CRITICAL: convert parametric coordinate to np.array, will not work without doing this:
+    # parametric_coords = np.array(parametric_coords, dtype='O,O')
+    # #TODO: Q: how does this need to be returned? --> A: as a csdl variable (array)
+    # material_thicknesses = [] #swap for 
+    # for material in material_stack:
+    #     material_thickness = material['thickness'].evaluate(parametric_coords)
+    #     material_thicknesses.append(material_thickness)
 
     #construct the surfaces for each cross-section
     #TODO: break this function into a few separate parts
