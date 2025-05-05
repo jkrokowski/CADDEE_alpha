@@ -347,8 +347,9 @@ class Blade(Wing):
             print(f'Section {i}/{num_spanwise}')
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             #return pts and valid offset points (along with valid offset point indices)
-            top_pts,top_pts_offset = self._get_pts_and_offset_pts(parametric_top) 
-
+            (top_pts,
+                top_pts_offset,
+                valid_top_offset_pts_indices) = self._get_pts_and_offset_pts(parametric_top,return_indices=True) 
 
             # roc_top = self._get_roc(parametric_top)
             # #get
@@ -367,7 +368,9 @@ class Blade(Wing):
 
             #BOTTOM SURFACE:
             parametric_bot = [(bot_index, np.array([u_coord, v_coord])) for v_coord in v_coords]
-            bot_pts,bot_pts_offset = self._get_pts_and_offset_pts(parametric_bot)
+            (bot_pts,
+                bot_pts_offset,
+                valid_bot_offset_pts_indices) = self._get_pts_and_offset_pts(parametric_bot,return_indices=True) 
             # roc_bot = self._get_roc(parametric_bot)
             # print('Bottom Min. RoC:')
             # print(np.min(np.abs(roc_bot)))
@@ -765,23 +768,32 @@ class Blade(Wing):
             #                           plot=True)
             
             #========== TOP SPAR CAP CONSTRUCTION ==========#
-            # #we can directly pull the set of points from the skin offset points:
-            # # top_spar_pts = skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]]
-            # #then, we can add the intersection points onto the list:
-            # top_spar_pts = csdl.concatenate([top_intersection_pt_rear,
-            #                                 skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]],
-            #                                 top_intersection_pt_front])
+            #we can directly pull the set of points from the skin offset points:
+            # top_spar_pts = skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]]
+            #then, we can add the intersection points onto the list:
+            #TODO: fix the rear intersection point here and elsewhere
+            top_spar_pts = csdl.concatenate([top_intersection_pt_rear,
+                                            skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]],
+                                            top_intersection_pt_front])
+
+            # top_spar_pts = self._get_pts_and_offset_pts(parametric_top)
             
-            # #get valid offset points for the spar cap:
+            #get valid offset points for the spar cap:
 
             
-            # #offset operation needs normals evaluated on the skin to perform the offset
-            # top_to_top_spar_offset_pts_indices = valid_top_offset_pts_indices[0][skin_indices_rear[0]+1:skin_indices_front[0]]
-            # parametric_top_spar_valid_offset = [parametric_top[indx] for indx in top_to_top_spar_offset_pts_indices]
+            #find the parametric points corresponding to the valid offset points between the spar surfaces
+            top_to_top_spar_offset_pts_indices = valid_top_offset_pts_indices[0][skin_indices_rear[0]+1:skin_indices_front[0]]
+            parametric_top_spar_valid_offset = [parametric_top[indx] for indx in top_to_top_spar_offset_pts_indices]
+            (top_spar_pts_backup,
+                top_spar_pts_offset,
+                valid_top_spar_offset_pts_indices) = self._get_pts_and_offset_pts(parametric_top_spar_valid_offset,
+                                                                      layer='all',
+                                                                      return_indices=True) 
+
+            top_spar_thicknesses= self._get_thicknesses(parametric_top,1).value
+
             # top_spar_normals = self.geometry.evaluate_normals(parametric_top_spar_valid_offset,plot=False)
             # top_spar_normals_inplane = rotate_oblique(top_spar_normals)
-            
-
             # roc_top_spar_valid_offset = self._get_roc(parametric_top_spar_valid_offset)
             # top_spar_valid_offset_thicknesses=self.quantities.material_properties.evaluate_thickness(parametric_top_spar_valid_offset).value
             # valid_top_spar_offset_pts_indices = (np.abs(roc_top_spar_valid_offset) >= top_spar_valid_offset_thicknesses).nonzero()
@@ -789,28 +801,25 @@ class Blade(Wing):
             # #further restrict based on full offset distance (both skin and spar distance)
             # top_to_top_spar_offset_pts_indices=top_to_top_spar_offset_pts_indices[valid_top_spar_offset_pts_indices[0]]
             
-
-
             # # top_spar_offset_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_top_spar_valid_offset)
             # top_spar_offset_thicknesses = self._get_thicknesses(parametric_top_spar_valid_offset,1).value
             # top_spar_offsets_inplane = top_spar_normals_inplane* csdl.expand(top_spar_offset_thicknesses,
             #                                                 top_spar_normals_inplane.shape,
             #                                                 'i->ij')
-            
             # top_spar_pts_offset = top_spar_pts + top_spar_offsets_inplane
             
-            # n_thickness_top_spar = 4
-            # approx_mesh_size_top_spar=np.min(top_spar_offset_thicknesses)/n_thickness_top_spar
+            n_thickness_top_spar = 4
+            approx_mesh_size_top_spar=np.min(top_spar_thicknesses)/n_thickness_top_spar
 
-            # top_spar_surf_name='top_spar_'+str(i)
-            # self._mesh_curve_and_offset(top_spar_pts,
-            #                                 top_spar_pts_offset,
-            #                                 name=top_spar_surf_name,
-            #                                 plot=True,
-            #                                 meshsize=approx_mesh_size_top_spar)
+            top_spar_surf_name='top_spar_'+str(i)
+            self._mesh_curve_and_offset(top_spar_pts,
+                                            top_spar_pts_offset,
+                                            name=top_spar_surf_name,
+                                            plot=True,
+                                            meshsize=approx_mesh_size_top_spar)
 
-            # #TODO:append intersection pts onto top spar pts, need to also project onto skin, get normal,
-            # #        evaluate offset feasibility,
+            #TODO:append intersection pts onto top spar pts, need to also project onto skin, get normal,
+            #        evaluate offset feasibility,
             
 
             # #========== BOTTOM SPAR CAP CONSTRUCTION ==========#
@@ -979,7 +988,7 @@ class Blade(Wing):
         return roc
          
                 
-    def _get_pts_and_offset_pts(self,parametric_pts):
+    def _get_pts_and_offset_pts(self,parametric_pts,layer=0,return_indices=False):
         ''' 
         Offset a set of points on a curve by the thickness assigned in the geometry
         parametric_pts: list of tuples of (surf_id, array(parametric_x,parametric_y))
@@ -990,9 +999,11 @@ class Blade(Wing):
         #       (not just always assuming the y-axis, like at the moment is done)
         num_points = len(parametric_pts)
         pts = self.geometry.evaluate(parametric_pts, plot=False)
-        normals = self.geometry.evaluate_normals(parametric_pts,plot=False)           
-        thicknesses = self._get_thicknesses(parametric_pts,0)
-        # thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_pts)
+        normals = self.geometry.evaluate_normals(parametric_pts,plot=False)    
+        if layer=='all':       
+            thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_pts)
+        else:
+            thicknesses = self._get_thicknesses(parametric_pts,layer)
 
         #perfom adjustment of in-plane normals to increase inplane thicknesses as req'd
         offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
@@ -1019,7 +1030,10 @@ class Blade(Wing):
         offset_pts=( pts + offsets)[list(valid_offset_indices[0]),:]
         # offset_pts = ( pts + offsets)
 
-        return pts,offset_pts
+        if return_indices:
+            return pts,offset_pts,valid_offset_indices
+        else:
+            return pts,offset_pts
         
     def _fit_xs_surface(self,pts,offset_pts,xs_surf_name,num_parametric):
         num_through_thickness = 2 #this is the number of ctl pts to fit the surface
