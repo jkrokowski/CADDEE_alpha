@@ -104,7 +104,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     pusher_prop_spar_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in spar_indices])
 
     #view the blade with the new spar surfaces
-    pusher_prop_blade.geometry.plot(opacity=0.5)
+    # pusher_prop_blade.geometry.plot(opacity=0.5)
     
     #MATERIALS
     #Aluminum
