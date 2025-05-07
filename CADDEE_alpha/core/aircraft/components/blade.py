@@ -325,6 +325,7 @@ class Blade(Wing):
         #   formulated as by solving J^T J delta = -J^T r,
         #   where r = x_parametric(parametric_coords) - x_physical
         #   until some convergence criterion
+        
 
         #TODO: use a coordinate transform to ensure that the meshing is always handled in xy-plane,
         #   then re-map back to physical space after computing the section meshes?
@@ -756,10 +757,6 @@ class Blade(Wing):
             #                           plot=True)
             
             #========== TOP SPAR CAP CONSTRUCTION ==========#
-            #we can directly pull the set of points from the skin offset points:
-            # top_spar_pts = skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]]
-            #then, we can add the intersection points onto the list:
-            #TODO: fix the rear intersection point here and elsewhere
             top_spar_pts = csdl.concatenate([top_intersection_pt_rear,
                                             skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]],
                                             top_intersection_pt_front])
@@ -790,44 +787,43 @@ class Blade(Wing):
                                             plot=False,
                                             meshsize=approx_mesh_size_top_spar)
 
-            #TODO:append intersection pts onto top spar pts, need to also project onto skin, get normal,
-            #        evaluate offset feasibility,
+            #TODO: need to also project onto skin            
             
-
-            # #========== BOTTOM SPAR CAP CONSTRUCTION ==========#
-            # bot_spar_pts = skin_offset_pts[skin_indices_front[1]+1:skin_indices_rear[1]]
-            # #TODO: evaluate radius of curvature for skin+spar offset thickness and 
-            # #       tag normals appropriately to prevent self-intersections
-
-            # #offset operation needs normals evaluated on the skin to perform the offset
-            # bot_to_bot_spar_offset_pts_indices = valid_bot_offset_pts_indices[0][skin_indices_front[1]+1:skin_indices_rear[1]]
-            # parametric_bot_spar_valid_offset = [parametric_bot[indx] for indx in bot_to_bot_spar_offset_pts_indices]
-            # bot_spar_normals = self.geometry.evaluate_normals(parametric_bot_spar_valid_offset,plot=False)
-
-            # bot_spar_normals_inplane = rotate_oblique(bot_spar_normals)
-                        
-            # # bot_spar_offset_thicknesses = self.quantities.material_properties.evaluate_thickness(parametric_bot_spar_valid_offset)
-            # bot_spar_offset_thicknesses = self._get_thicknesses(parametric_bot_spar_valid_offset,1).value
-            # bot_spar_offsets_inplane = bot_spar_normals_inplane* csdl.expand(bot_spar_offset_thicknesses,
-            #                                                 bot_spar_normals_inplane.shape,
-            #                                                 'i->ij')
+            #========== BOTTOM SPAR CAP CONSTRUCTION ==========#
+            bot_spar_pts = csdl.concatenate([bot_intersection_pt_front,
+                                            skin_offset_pts[skin_indices_front[1]+1:skin_indices_rear[1]],
+                                            bot_intersection_pt_rear])
             
-            # bot_spar_pts_offset = bot_spar_pts + bot_spar_offsets_inplane
+            #find the parametric points corresponding to the valid offset points between the spar surfaces
+            num_top_offset_pts = top_pts_offset.shape[0]
+            start = (skin_indices_front[1]-num_top_offset_pts)+1
+            end = skin_indices_rear[1]-num_top_offset_pts
+            bot_to_bot_spar_offset_pts_indices = valid_bot_offset_pts_indices[start:end]
+            parametric_bot_spar_valid_offset = [parametric_bot[indx] for indx in bot_to_bot_spar_offset_pts_indices]
+            (bot_spar_pts_backup,
+                bot_spar_pts_offset,
+                valid_bot_spar_offset_pts_indices) = self._get_pts_and_offset_pts(parametric_bot_spar_valid_offset,
+                                                                      layer='all',
+                                                                      return_indices=True) 
+
+            bot_spar_thicknesses= self._get_thicknesses(parametric_bot,1).value
             
-            # n_thickness_bot_spar = 4
-            # approx_mesh_size_bot_spar=np.min(bot_spar_offset_thicknesses)/n_thickness_bot_spar
+            n_thickness_bot_spar = 4
+            approx_mesh_size_bot_spar=np.min(bot_spar_thicknesses)/n_thickness_bot_spar
 
-            # bot_spar_surf_name='bot_spar_'+str(i)
-            # self._mesh_curve_and_offset(bot_spar_pts,
-            #                                 bot_spar_pts_offset,
-            #                                 name=bot_spar_surf_name,
-            #                                 plot=True,
-            #                                 meshsize=approx_mesh_size_bot_spar)
+            bot_spar_surf_name='bot_spar_'+str(i)
+            
+            #verify the axial coordinate is set properly
+            set_axial_value(bot_spar_pts,axial_coord)
+            set_axial_value(bot_spar_pts_offset,axial_coord)
 
-            # #TODO:append intersection pts onto bot spar pts, need to also project onto skin, get normal,
-            # #        evaluate offset feasibility,
-            # bot_intersection_pt_front
-            # bot_intersection_pt_rear
+            self._mesh_curve_and_offset(bot_spar_pts,
+                                            bot_spar_pts_offset,
+                                            name=bot_spar_surf_name,
+                                            plot=True,
+                                            meshsize=approx_mesh_size_bot_spar)
+
+            #TODO: need to also project onto skin            
 
             #========== FRONT FILL CONSTRUCTION ==========#
             front_skin_offset_segment = csdl.concatenate([top_intersection_pt_front,
@@ -843,11 +839,12 @@ class Blade(Wing):
                                                      meshsize=approx_mesh_size_rear_spar)
 
             #========== REAR FILL CONSTRUCTION ==========#
-            rear_skin_offset_upper_segment = csdl.concatenate([skin_offset_pts[:skin_indices_rear[1]],
+            rear_skin_offset_upper_segment = csdl.concatenate([skin_offset_pts[:skin_indices_rear[0]],
                                                                top_intersection_pt_rear])
             rear_skin_offset_lower_segment = csdl.concatenate([bot_intersection_pt_rear,
-                                                               skin_offset_pts[skin_indices_rear[0]+1:]])
-            set_axial_value(front_skin_offset_segment,axial_coord) #ensure all axial coordinates match
+                                                               skin_offset_pts[skin_indices_rear[1]+1:]])
+            set_axial_value(rear_skin_offset_upper_segment,axial_coord) #ensure all axial coordinates match
+            set_axial_value(rear_skin_offset_lower_segment,axial_coord) #ensure all axial coordinates match
 
             rear_fill_surf_name = 'rear_fill_'+str(i)
             rear_fill_mesh = self._mesh_curve_loop([rear_skin_offset_upper_segment,
@@ -856,6 +853,7 @@ class Blade(Wing):
                                                      name=rear_fill_surf_name,
                                                      plot=True,
                                                      meshsize=approx_mesh_size_rear_spar)
+            
             #TODO: construct balance mass surface?
             
                     

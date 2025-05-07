@@ -98,14 +98,17 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     front_spar_geometry,rear_spar_geometry = pusher_prop_blade.create_internal_geometry(
         top_geometry,
         bottom_geometry,
-        spar_locations=np.array([0.25,0.6])
+        spar_locations=np.array([0.15,0.65])
     )
     spar_indices = [list(spar.function_names.keys())[0] for spar in [front_spar_geometry,rear_spar_geometry]]
     pusher_prop_spar_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in spar_indices])
 
     #view the blade with the new spar surfaces
     # pusher_prop_blade.geometry.plot(opacity=0.5)
-    
+    pusher_prop_blade_geometry.evaluate(([[174,(i/10,0)] for i in range(11)]+
+                                          [[174,(i/10,1)] for i in range(11)]),plot=True)
+    pusher_prop_blade_geometry.evaluate([[174,(i/10,0)] for i in range(11)])
+
     #MATERIALS
     #Aluminum
     E_Al = csdl.Variable(value=69E9, name='E_Al')
