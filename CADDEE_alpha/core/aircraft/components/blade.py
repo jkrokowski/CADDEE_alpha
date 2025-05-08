@@ -205,6 +205,7 @@ class Blade(Wing):
             spar_locations = np.array([0.25, 0.75])
         
         blade = self
+        self.spar_termination = spar_termination
 
         #get and store indices of surfaces in blade
         top_index =list(top_geometry.function_names.keys())[0]
@@ -240,16 +241,15 @@ class Blade(Wing):
         
         LE_base_coord = self.geometry.evaluate(self._LE_base_point).value
         LE_tip_coord = self.geometry.evaluate(self._LE_tip_point).value
-        blade_length=LE_tip_coord[1]-LE_base_coord[1]
-        #physical coordinates
-        axial_coords=np.linspace(LE_base_coord[1],LE_tip_coord[1]-(1-spar_termination)*blade_length,num_spanwise)
-        coords = np.vstack([LE_base_coord[0]*np.ones_like(axial_coords),axial_coords,LE_base_coord[2]*np.ones_like(axial_coords)]).T
-        #get the parametric v coordinate for the projection of the evenly spaced physical points:
-        u_coords = np.array([parametric[1][0][0] for parametric in top_geometry.project(coords)])
-        # u_coords=np.linspace(0,1,num_spanwise)
+        self.blade_length = LE_tip_coord[1]-LE_base_coord[1]
+        spar_start = LE_base_coord
+        spar_end = LE_tip_coord
+        spar_end[1] = LE_tip_coord[1]-(1-spar_termination)*self.blade_length
+        self.spar_length = spar_end[1]-spar_start[1]
+        u_coords_spar=self._get_parametric_spacing(top_geometry,spar_start,spar_end,num_spanwise)
 
-        parametric_LE = np.vstack([u_coords,np.ones((num_spanwise))]).T
-        parametric_TE = np.vstack([u_coords,np.zeros((num_spanwise))]).T
+        parametric_LE = np.vstack([u_coords_spar,np.ones((num_spanwise))]).T
+        parametric_TE = np.vstack([u_coords_spar,np.zeros((num_spanwise))]).T
 
         parametric_LE_tuple_list = [(top_index,parametric_LE[i,:]) for i in range(parametric_LE.shape[0])]
         parametric_TE_tuple_list = [(top_index,parametric_TE[i,:]) for i in range(parametric_TE.shape[0])]
@@ -327,24 +327,27 @@ class Blade(Wing):
         
         #number of parametric points to be evaluated for each surface
         num_parametric = 500
-        u_coords = np.linspace(0,1,num_spanwise)
+        # u_coords = np.linspace(0,1,num_spanwise)
+        #ensure even spacing in physical space
+        LE_base_coord = self.geometry.evaluate(self._LE_base_point).value
+        LE_tip_coord = self.geometry.evaluate(self._LE_tip_point).value
+        u_coords = self._get_parametric_spacing(top_geometry,LE_base_coord,LE_tip_coord,num_spanwise)
+        #TODO:insert the endpoint of the spar box into the u_coords
+        u_coord_spar_termination=top_geometry.project(front_spar_geometry.evaluate([(front_spar_index, np.array([1.0,1.0]))]),direction=[1,0,1])[0][1][0][0]
+        u_coords_insert=(u_coords>u_coord_spar_termination).nonzero()[0][0]
+        u_coords_new = np.insert(u_coords,u_coords_insert,u_coord_spar_termination)
         v_coords = np.linspace(0,1,num_parametric) # linear spacing doesn't perform well
-        #TODO: need to get the mapping from parametric spacing to physical spacing
-        #   can get a more even (in physical space) spacing of parametric points by solving
-        #   the inverse parametric mapping problem. This is a nonlinear problem which can be
-        #   formulated as by solving J^T J delta = -J^T r,
-        #   where r = x_parametric(parametric_coords) - x_physical
-        #   until some convergence criterion
 
         #TODO: use a coordinate transform to ensure that the meshing is always handled in xy-plane,
         #   then re-map back to physical space after computing the section meshes?
         #   Currently, this meshing only works if the rotor blade has it's beam axis directly along the y-axis
 
         xs = []
-
-        for i,u_coord in enumerate(u_coords):            
+        
+        # for i,u_coord in enumerate(u_coords):
+        start_xs = 5            
+        for i,u_coord in zip([i+start_xs for i in range(len(u_coords[start_xs:]))],u_coords[start_xs:]):            
             #NEED TO USE A CONSTANT AXIAL COORDINATE TO PREVENT MESHING ISSUES ASSOCIATED WITH FITTING PLANAR SURFACES
-            #NOTE: if you want to evaluate the 
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             axial_coord = np.average(self.geometry.evaluate(parametric_top).value[:,1])
 
@@ -453,7 +456,6 @@ class Blade(Wing):
             
             print("num skin pts="+str(skin_pts.shape[0])+', num offset pts:'+str(skin_offset_pts.shape[0]))
             
-            # self.plot_pts(skin_pts,skin_offset_pts)
             n_thickness = 3
             approx_mesh_size_skin=np.min(np.vstack([top_thicknesses,bot_thicknesses]))/n_thickness
 
@@ -474,13 +476,24 @@ class Blade(Wing):
             #                           component=skin_surf_geometry,
             #                           plot=True)
             
-
+            #CHECK IF THE SPANWISE COORDINATE IS BEFORE OR AFTER THE SPAR TERMINATION:
+            front_spar_end=front_spar_geometry.evaluate([(front_spar_index, np.array([1.0,1.0]))])
+            if front_spar_end.value[1]>=axial_coord:
+                print('still got it :)')
             #========== FRONT SPAR CONSTRUCTION ==========#
-            parametric_front_spar = [(front_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            #TODO: need to get the correct parametric u_coord from the parametric u_coord defined on the skin
+            #   First, need to check whether the spar box as terminated or not
+            #   If, so do not try to mesh the front spar
+            # front_spar_geometry.project(top_geometry.evaluate([(top_index, np.array([u_coord,1])) for u_coord in u_coords[:8]]),direction=[0,1,0],plot=True)
+            u_coord_front_spar=[parametric[1][0][0] 
+                                for parametric in front_spar_geometry.project(
+                                                    top_geometry.evaluate([(top_index, np.array([u_coord,1]))]),
+                                                                           direction=[1,0,1])][0]
+            parametric_front_spar = [(front_spar_index, np.array([u_coord_front_spar,v_coord])) for v_coord in v_coords]
             front_spar_pts,front_spar_pts_offset = self._get_pts_and_offset_pts(parametric_front_spar)
             #trim points off the spar curves that intersect with the inner edge of the skin
             #   and add the inner surface curve points to construct the edge that is "shared" with the skin
-            #   The spar curve itself will always have 2 interesections
+            #   The spar curve itself will always have 2 intersections
             #   Can have cases with the offset spar curve and skin offset have 0,1,or 2 intersections
             
             #this is guaranteed to have exactly 2 intersections (based on how it was constructed)
@@ -551,7 +564,7 @@ class Blade(Wing):
 
                 #identify which end point is lacking an intersection
                 #upper edge case
-                if front_spar_offset_skin_intersections[0][0]<=front_spar_pts_offset.shape[0]/2:
+                if front_spar_offset_skin_intersections[0][0]>=front_spar_pts_offset.shape[0]/2:
                     #evaluate normals and thicknesses for spar points
                     spar_skin_pts = [parametric_front_spar[0],parametric_front_spar[0]]
                     front_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness(spar_skin_pts)
@@ -572,7 +585,7 @@ class Blade(Wing):
                     front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
                 
                 #lower edge case
-                elif front_spar_offset_skin_intersections[0][0]>front_spar_pts_offset.shape[0]/2:
+                elif front_spar_offset_skin_intersections[0][0]<front_spar_pts_offset.shape[0]/2:
                     #evaluate normals and thicknesses for spar points
                     #REPEAT TO PREVENT THROWING ERROR:
                     spar_skin_pts = [parametric_front_spar[-1],parametric_front_spar[-1]]
@@ -588,8 +601,7 @@ class Blade(Wing):
                     ext_pt_bot = front_spar_pts_offset[-1] + front_spar_ext_thickness[0]*e_bot
 
                     #add the extended points to the offset points array
-                    front_spar_pts_offset = csdl.concatenate([ext_pt_top.reshape((1,3)),
-                                                            front_spar_pts_offset,
+                    front_spar_pts_offset = csdl.concatenate([front_spar_pts_offset,
                                                             ext_pt_bot.reshape((1,3))])
                     #find the intersection between that and the skin offset pts:
                     front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
@@ -664,7 +676,11 @@ class Blade(Wing):
             #                           plot=True)
             
             #========== REAR SPAR CONSTRUCTION ==========#
-            parametric_rear_spar = [(rear_spar_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
+            u_coord_rear_spar=[parametric[1][0][0] 
+                                for parametric in rear_spar_geometry.project(
+                                                    top_geometry.evaluate([(top_index, np.array([u_coord,1]))]),
+                                                                           direction=[1,0,1])][0]
+            parametric_rear_spar = [(rear_spar_index, np.array([u_coord_rear_spar,v_coord])) for v_coord in v_coords]
             rear_spar_pts,rear_spar_pts_offset = self._get_pts_and_offset_pts(parametric_rear_spar)
             #trim points off the spar curves that intersect with the inner edge of the skin
             #   and add the inner surface curve points to construct the edge that is "shared" with the skin
@@ -804,6 +820,7 @@ class Blade(Wing):
             #                           plot=True)
             
             #========== TOP SPAR CAP CONSTRUCTION ==========#
+            #TODO: indices for the offset have some issues (need to dig into this a bit more)
             top_spar_pts = csdl.concatenate([top_intersection_pt_rear,
                                             skin_offset_pts[skin_indices_rear[0]+1:skin_indices_front[0]],
                                             top_intersection_pt_front])
@@ -867,7 +884,7 @@ class Blade(Wing):
             self._mesh_curve_and_offset(bot_spar_pts,
                                             bot_spar_pts_offset,
                                             name=bot_spar_surf_name,
-                                            plot=True,
+                                            plot=False,
                                             meshsize=approx_mesh_size_bot_spar)
 
             #TODO: need to also project onto skin            
@@ -898,13 +915,34 @@ class Blade(Wing):
                                                      rear_spar_pts[::-1],
                                                      rear_skin_offset_lower_segment],
                                                      name=rear_fill_surf_name,
-                                                     plot=True,
+                                                     plot=False,
                                                      meshsize=approx_mesh_size_rear_spar)
             
             #TODO: construct balance mass surface?
             
                     
         # self.geometry.plot(opacity=0.5)
+
+    def _get_parametric_spacing(self,geometry,start,end,num_spanwise,axis=1):
+        ''' geometry:geometry to project onto
+            start: xyz coordinate
+            end: xyz coordinate
+            num_spanwise: number of points (num_segements=num_spanwise-1)'''        
+        # axial_coords=np.linspace(LE_base_coord[1],LE_tip_coord[1]-(1-self.spar_termination)*blade_length,num_spanwise)
+        if axis==0:
+            axial_coords=np.linspace(start[0],end[0],num_spanwise)
+            coords = np.vstack([axial_coords,start[1]*np.ones_like(axial_coords),end[2]*np.ones_like(axial_coords)]).T
+        elif axis==1:
+            axial_coords=np.linspace(start[1],end[1],num_spanwise)
+            coords = np.vstack([start[0]*np.ones_like(axial_coords),axial_coords,end[2]*np.ones_like(axial_coords)]).T
+        elif axis==2:
+            axial_coords=np.linspace(start[2],end[2],num_spanwise)
+            coords = np.vstack([start[0]*np.ones_like(axial_coords),start[1]*np.ones_like(axial_coords),axial_coords]).T
+        #get the parametric u coordinate for the projection of the evenly spaced physical points:
+        u_coords = np.array([parametric[1][0][0] for parametric in geometry.project(coords)])
+        # u_coords=np.linspace(0,1,num_spanwise)
+        return u_coords
+
     def plot_vecs(self,origin, vectors, colors=None):
         """
         Plot 2D vectors and their unit vectors from a common origin.
@@ -973,7 +1011,7 @@ class Blade(Wing):
             x4, y4 = p4
 
             denom = (x1 - x2)*(y3 - y4) - (y1 - y2)*(x3 - x4)
-            if abs(denom) < 1e-10:
+            if abs(denom) < 1e-13:
                 return None
 
             px = ((x1*y2 - y1*x2)*(x3 - x4) - (x1 - x2)*(x3*y4 - y3*x4)) / denom
@@ -1054,8 +1092,10 @@ class Blade(Wing):
         #get radius of curvature
         roc = self._get_roc(parametric_pts)
 
-        #discard offset points that would produce self-intersections
-        valid_offset_indices = (np.abs(roc) >= thicknesses.value).nonzero()[0]
+        #discasrd offset points that would produce self-intersections
+        #add some margin to the thicknesses to prevent missed invalid points due to errors in roc computation
+        margin=2
+        valid_offset_indices = (np.abs(roc) >= 2*thicknesses.value).nonzero()[0]
         offset_pts=( pts + offsets)[list(valid_offset_indices),:]
         # offset_pts = ( pts + offsets)
 
