@@ -181,6 +181,7 @@ class Blade(Wing):
             top_geometry:lg.Geometry,
             bottom_geometry:lg.Geometry,
             spar_locations:np.ndarray=None,
+            spar_termination:int=None,
             spar_function_space:lfs.FunctionSpace=None,
             surf_index:int=1000,
             offset:np.ndarray=np.array([0., 0., .23])
@@ -213,7 +214,7 @@ class Blade(Wing):
         
         num_spars = spar_locations.shape[0]
         if num_spars != 2:
-            raise Exception("Cannot have single spar. Provide at least two normalized spar locations.")
+            raise Exception("Provide exactly two normalized spar locations.")
         
         num_spanwise = 10
         if spar_function_space is None:
@@ -237,7 +238,15 @@ class Blade(Wing):
         # chord_direction_tip = r_tip_le-r_tip_te
         spanwise_direction = np.array([0,1,0])
         
-        u_coords=np.linspace(0,1,num_spanwise)
+        LE_base_coord = self.geometry.evaluate(self._LE_base_point).value
+        LE_tip_coord = self.geometry.evaluate(self._LE_tip_point).value
+        blade_length=LE_tip_coord[1]-LE_base_coord[1]
+        #physical coordinates
+        axial_coords=np.linspace(LE_base_coord[1],LE_tip_coord[1]-(1-spar_termination)*blade_length,num_spanwise)
+        coords = np.vstack([LE_base_coord[0]*np.ones_like(axial_coords),axial_coords,LE_base_coord[2]*np.ones_like(axial_coords)]).T
+        #get the parametric v coordinate for the projection of the evenly spaced physical points:
+        u_coords = np.array([parametric[1][0][0] for parametric in top_geometry.project(coords)])
+        # u_coords=np.linspace(0,1,num_spanwise)
 
         parametric_LE = np.vstack([u_coords,np.ones((num_spanwise))]).T
         parametric_TE = np.vstack([u_coords,np.zeros((num_spanwise))]).T
@@ -274,6 +283,7 @@ class Blade(Wing):
 
         #front spar internal surface
         parametric_points_front = spar_top_front.tolist()+spar_bot_front.tolist()
+        u_coords=np.linspace(0,1,num_spanwise)
         fitting_coords = np.array([[u, 0] for u in u_coords] + [[u, 1] for u in u_coords])
         fitting_values = self.geometry.evaluate(parametric_points_front)
         coefficients = spar_function_space.fit(fitting_values, fitting_coords)
@@ -325,7 +335,6 @@ class Blade(Wing):
         #   formulated as by solving J^T J delta = -J^T r,
         #   where r = x_parametric(parametric_coords) - x_physical
         #   until some convergence criterion
-        
 
         #TODO: use a coordinate transform to ensure that the meshing is always handled in xy-plane,
         #   then re-map back to physical space after computing the section meshes?
@@ -340,10 +349,6 @@ class Blade(Wing):
             axial_coord = np.average(self.geometry.evaluate(parametric_top).value[:,1])
 
             #========== SKIN CONSTRUCTION ==========#
-            # For each wing skin surface: 
-            # IF the Radius of curvature exceeds the maximum design thickness, 
-            # purge the corresponding pts from the offset pts
-            
             #TOP SURFACE:
             print(f'Section {i}/{num_spanwise}')
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
@@ -351,10 +356,8 @@ class Blade(Wing):
             (top_pts,
                 top_pts_offset,
                 valid_top_offset_pts_indices) = self._get_pts_and_offset_pts(parametric_top,return_indices=True) 
-            # #evaluate thicknesses for comparison to radius of curvature
             # #TODO: in an optimization run, swap for the design variable upper limit:
             top_thicknesses= self._get_thicknesses(parametric_top,0).value
-
             print("num top pts="+str(top_pts.shape[0])+', num offset pts:'+str(top_pts_offset.shape[0]))
 
             #BOTTOM SURFACE:
@@ -469,7 +472,7 @@ class Blade(Wing):
                                                     num_boundary_comp=2)
             # skin_output = cd.mesh_utils.import_mesh(file=skin_mesh,
             #                           component=skin_surf_geometry,
-            #                           plot=False)
+            #                           plot=True)
             
 
             #========== FRONT SPAR CONSTRUCTION ==========#
@@ -515,23 +518,25 @@ class Blade(Wing):
                 spar_skin_pts = [parametric_front_spar[0],parametric_front_spar[-1]]
                 front_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness(spar_skin_pts)
                 front_spar_ext_normal = self.geometry.evaluate_normals(spar_skin_pts)
-                
-                #evaluate front spar point, project to top surface, then evaluate derivative at that location
-                tangent_vec = top_geometry.evaluate(
-                                top_geometry.project(
-                                        self.geometry.evaluate(spar_skin_pts)
-                                            ),parametric_derivative_orders=(0,1))
-                tangent_vec /= csdl.norm(tangent_vec) #normalize
-
                 front_spar_ext_normal_inplane = rotate_oblique(front_spar_ext_normal)
-
+                
                 #get extension points
                 #===== UPPER EDGE =======#
-                e_top = get_extension_vector(tangent_vec[0],front_spar_ext_normal_inplane[0])
+                #evaluate front spar point, project to top surface, then evaluate derivative at that location
+                tangent_vec_top = top_geometry.evaluate(
+                                        top_geometry.project(self.geometry.evaluate([spar_skin_pts[0]])),
+                                        parametric_derivative_orders=(0,1))
+                tangent_vec_top /= csdl.norm(tangent_vec_top) #normalize
+                e_top = get_extension_vector(tangent_vec_top,front_spar_ext_normal_inplane[0])
                 ext_pt_top = front_spar_pts_offset[0] + front_spar_ext_thickness[0]*e_top 
                 #===== LOWER EDGE =======#
-                e_bot = get_extension_vector(tangent_vec[1],front_spar_ext_normal_inplane[1])
-                ext_pt_bot = front_spar_pts_offset[1] + front_spar_ext_thickness[1]*e_bot
+                #evaluate front spar point, project to bottom surface, then evaluate derivative at that location
+                tangent_vec_bot = bottom_geometry.evaluate(
+                                        bottom_geometry.project(self.geometry.evaluate([spar_skin_pts[1]])),
+                                        parametric_derivative_orders=(0,1))
+                tangent_vec_bot /= csdl.norm(tangent_vec_bot) #normalize
+                e_bot = get_extension_vector(tangent_vec_bot,front_spar_ext_normal_inplane[1])
+                ext_pt_bot = front_spar_pts_offset[-1] + front_spar_ext_thickness[1]*e_bot
 
                 #add the extended points to the offset points array
                 front_spar_pts_offset = csdl.concatenate([ext_pt_top.reshape((1,3)),
@@ -545,11 +550,52 @@ class Blade(Wing):
                 print("one intersection! ")
 
                 #identify which end point is lacking an intersection
+                #upper edge case
+                if front_spar_offset_skin_intersections[0][0]<=front_spar_pts_offset.shape[0]/2:
+                    #evaluate normals and thicknesses for spar points
+                    spar_skin_pts = [parametric_front_spar[0],parametric_front_spar[0]]
+                    front_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness(spar_skin_pts)
+                    front_spar_ext_normal = self.geometry.evaluate_normals(spar_skin_pts)
+                    front_spar_ext_normal_inplane = rotate_oblique(front_spar_ext_normal)
+                    #evaluate front spar point, project to top surface, then evaluate derivative at that location
+                    tangent_vec_top = top_geometry.evaluate(
+                                            top_geometry.project(self.geometry.evaluate([spar_skin_pts[0]])),
+                                            parametric_derivative_orders=(0,1))
+                    tangent_vec_top /= csdl.norm(tangent_vec_top) #normalize
+                    e_top = get_extension_vector(tangent_vec_top,front_spar_ext_normal_inplane[0])
+                    ext_pt_top = front_spar_pts_offset[0] + front_spar_ext_thickness[0]*e_top 
+                    
+                    #add the extended points to the offset points array
+                    front_spar_pts_offset = csdl.concatenate([ext_pt_top.reshape((1,3)),
+                                                            front_spar_pts_offset])
+                    #find the intersection between that and the skin offset pts:
+                    front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
+                
+                #lower edge case
+                elif front_spar_offset_skin_intersections[0][0]>front_spar_pts_offset.shape[0]/2:
+                    #evaluate normals and thicknesses for spar points
+                    #REPEAT TO PREVENT THROWING ERROR:
+                    spar_skin_pts = [parametric_front_spar[-1],parametric_front_spar[-1]]
+                    front_spar_ext_thickness=self.quantities.material_properties.evaluate_thickness(spar_skin_pts)
+                    front_spar_ext_normal = self.geometry.evaluate_normals(spar_skin_pts)
+                    front_spar_ext_normal_inplane = rotate_oblique(front_spar_ext_normal)
+                    #evaluate front spar point, project to bottom surface, then evaluate derivative at that location
+                    tangent_vec_bot = bottom_geometry.evaluate(
+                                            bottom_geometry.project(self.geometry.evaluate([spar_skin_pts[0]])),
+                                            parametric_derivative_orders=(0,1))
+                    tangent_vec_bot /= csdl.norm(tangent_vec_bot) #normalize
+                    e_bot = get_extension_vector(tangent_vec_bot,front_spar_ext_normal_inplane[1])
+                    ext_pt_bot = front_spar_pts_offset[-1] + front_spar_ext_thickness[0]*e_bot
 
-                #extend the offset curve in that direction
-
-                #recompute the offset curve intersections (especially if the missing intersection was on the top, as that means subsequent indices would need to get adjusted)
-
+                    #add the extended points to the offset points array
+                    front_spar_pts_offset = csdl.concatenate([ext_pt_top.reshape((1,3)),
+                                                            front_spar_pts_offset,
+                                                            ext_pt_bot.reshape((1,3))])
+                    #find the intersection between that and the skin offset pts:
+                    front_spar_offset_skin_intersections=self._find_pt_set_intersection(front_spar_pts_offset,skin_offset_pts)
+                else:
+                    print("could not correctly identify the missing intersection end :(")
+                    
             elif len(front_spar_offset_skin_intersections) == 2:
                 print("two intersections!")
                 #No need to do anything here, carry on
@@ -688,6 +734,7 @@ class Blade(Wing):
 
 
             elif len(rear_spar_offset_skin_intersections) == 1:
+                #TODO: detect which section doesn't have an intersection
                 print("one intersection! ")
 
                 #identify which end point is lacking an intersection
