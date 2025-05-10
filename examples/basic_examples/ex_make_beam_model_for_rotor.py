@@ -189,11 +189,11 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
 
     #construct the surfaces for each cross-section
     #TODO: break this function into a few separate parts
-    pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
-                                            bottom_geometry=bottom_geometry,
-                                            front_spar_geometry=front_spar_geometry, 
-                                            rear_spar_geometry=rear_spar_geometry,
-                                            num_spanwise=10)
+    # pusher_prop_blade.create_beam_xs_meshes(top_geometry=top_geometry,
+    #                                         bottom_geometry=bottom_geometry,
+    #                                         front_spar_geometry=front_spar_geometry, 
+    #                                         rear_spar_geometry=rear_spar_geometry,
+    #                                         num_spanwise=10)
     
     #construct the meshes for each surface in each cross-section
 
@@ -201,19 +201,19 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
 
 
 
-    exit()
+    # exit()
 
 
     # ================== LIFT ROTORS =========================== #
     #make plot of upper and lower skin surfaces for illustrative purposes:
-    for i in range(10):
-        pusher_prop_blade_xs_skin = pusher_prop_blade.create_subgeometry(search_names=["skin_"+str(i)])
+    # for i in range(10):
+    #     pusher_prop_blade_xs_skin = pusher_prop_blade.create_subgeometry(search_names=["skin_"+str(i)])
         
-        xs_plot=pusher_prop_blade_xs_skin.plot(color=000000)
+    #     xs_plot=pusher_prop_blade_xs_skin.plot(color=000000)
 
-        # pusher_prop_blade_xs_ts.plot(additional_plotting_elements=[xs_bs_plot],opacity=0.5)
+    #     # pusher_prop_blade_xs_ts.plot(additional_plotting_elements=[xs_bs_plot],opacity=0.5)
 
-    pusher_prop_blade.geometry.plot(opacity=0.5)
+    # pusher_prop_blade.geometry.plot(opacity=0.5)
 
     aluminum_albatross = ALBATROSS.material.caddee_material_to_albatross(aluminum)
 
@@ -225,8 +225,9 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
         rotor_geometry = aircraft.create_subgeometry(search_names=[
             f"Rotor_{i+1}_disk",
             f"Rotor_{i+1}_Hub",
-            f"Rotor_{i+1}_blades",]
-        )
+            f"Rotor_{i+1}_blades",])
+        # rotor_geometry.plot(opacity=0.75)
+        
         rotor = cd.aircraft.components.Rotor(radius=3.048/2.5, geometry=rotor_geometry)
         lift_rotors.append(rotor)
         airframe.comps[f"rotor_{i+1}"] = rotor
@@ -234,7 +235,7 @@ def mesh_rotor_blade(caddee : cd.CADDEE):
     # lift_rotor_1.plot()
     
     lift_rotor_1_blade_geometry = lift_rotor_1.create_subgeometry(search_names="Rotor_1_blades, 0")
-    lift_rotor_1_blade_geometry.plot()
+    lift_rotor_1_blade_geometry.plot(opacity=0.75)
 
     lift_rotor_1_blade = cd.aircraft.components.Blade(AR=1,S_ref=1,geometry=lift_rotor_1_blade_geometry)
     # lift_rotor_1_blade.create_beam_xs_meshes(,num_spanwise=15)

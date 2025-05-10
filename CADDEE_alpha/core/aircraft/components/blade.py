@@ -345,7 +345,7 @@ class Blade(Wing):
         xs = []
         
         # for i,u_coord in enumerate(u_coords):
-        start_xs = 5            
+        start_xs = 7            
         for i,u_coord in zip([i+start_xs for i in range(len(u_coords[start_xs:]))],u_coords[start_xs:]):            
             #NEED TO USE A CONSTANT AXIAL COORDINATE TO PREVENT MESHING ISSUES ASSOCIATED WITH FITTING PLANAR SURFACES
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
@@ -466,8 +466,35 @@ class Blade(Wing):
             #                                         skin_surf_name,
             #                                         num_parametric)
             # skin_surf_geometry.plot(opacity=0.75)
+
+            #generate a linearly spaced set of points from the trailing edge point to the intersection point
+            #project these points to the upper and lower skins, then pointwise average their locations
+            num_te_pts = 10
+            te_line_x = np.linspace(skin_pts[1].value[0],skin_offset_pts[1].value[0],num_te_pts)
+            te_line_y = axial_coord*np.ones_like(te_line_x)
+            te_line_z = np.linspace(skin_pts[1].value[2],skin_offset_pts[1].value[2],num_te_pts)
+            te_line_pts = np.vstack([te_line_x,te_line_y,te_line_z]).T
+
+            te_spline_top = top_geometry.evaluate(top_geometry.project(te_line_pts))
+            te_spline_bottom = bottom_geometry.evaluate(bottom_geometry.project(te_line_pts))
+
+            te_spline_pts= csdl.Variable(value=np.mean([te_spline_top.value,te_spline_bottom.value],axis=0))
+            te_spline_pts = csdl.concatenate([skin_pts[0:1],
+                                              te_spline_pts,
+                                              skin_offset_pts[0:1]])
+            set_axial_value(skin_pts,axial_coord)
+            set_axial_value(skin_offset_pts,axial_coord)
+            set_axial_value(te_spline_pts,axial_coord)
+            # skin_mesh = self._mesh_curve_loop([skin_pts,
+            #                                    te_spline_pts,
+            #                                     skin_offset_pts,
+            #                                     te_spline_pts[::-1]],
+            #                                     plot=False,
+            #                                     meshsize=approx_mesh_size_skin)
+
             skin_mesh = self._mesh_curve_and_offset(skin_pts,
                                                     skin_offset_pts,
+                                                    edge_pts=te_spline_pts,
                                                     name=skin_surf_name,
                                                     plot=False,
                                                     meshsize=approx_mesh_size_skin,
@@ -636,12 +663,6 @@ class Blade(Wing):
                                                     skin_offset_pts[skin_indices_front[1]+1:skin_indices_front_offset[1]],
                                                     bot_intersection_pt_front_offset])
 
-            #Set a consistent value for all spar surface curves:
-            def set_axial_value(vec,val):
-                vec.set_value(np.vstack([vec[:,0].value,
-                                            np.ones_like(vec[:,1].value)*val,
-                                            vec[:,2].value]).T)
-                return
             set_axial_value(front_spar_top_pts,axial_coord)
             set_axial_value(front_spar_bot_pts,axial_coord)            
             set_axial_value(front_spar_pts,axial_coord)            
@@ -1073,32 +1094,31 @@ class Blade(Wing):
             thicknesses = self._get_thicknesses(parametric_pts,layer)
 
         #perfom adjustment of in-plane normals to increase inplane thicknesses as req'd
-        offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
+        # offset_thicknesses = thicknesses / csdl.sqrt(1- (normals[:,1])**2)
 
         #get inplane normals
-        normals_inplane = (normals@(np.array([[1,0,0],[0,0,1]])).T)
-
+        # normals_inplane = (normals@(np.array([[1,0,0],[0,0,1]])).T)
+        normals_inplane = rotate_oblique(normals)
         #offset inplane points by the inplane offset thickness
         #broadcasting vector to matrix not working well in csdl, so have to use expand
-        offsets_inplane = normals_inplane* csdl.expand(offset_thicknesses,
-                                                            normals_inplane.shape,
-                                                            'i->ij')
+        # offsets_inplane = normals_inplane* csdl.expand(offset_thicknesses,normals_inplane.shape,'i->ij')
+        offsets= normals_inplane* csdl.expand(thicknesses,normals_inplane.shape,'i->ij')
         
         #add back the axial coordinate
-        offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_points,1)),
-                                        np.zeros((num_points,1)),
-                                        offsets_inplane[:,1].value.reshape((num_points,1))],
-                                        axis=1)
+        # offsets = np.concatenate([offsets_inplane[:,0].value.reshape((num_points,1)),
+        #                                 np.zeros((num_points,1)),
+        #                                 offsets_inplane[:,1].value.reshape((num_points,1))],
+        #                                 axis=1)
         #get radius of curvature
         roc = self._get_roc(parametric_pts)
 
         #discasrd offset points that would produce self-intersections
         #add some margin to the thicknesses to prevent missed invalid points due to errors in roc computation
-        margin=2
-        valid_offset_indices = (np.abs(roc) >= 2*thicknesses.value).nonzero()[0]
-        offset_pts=( pts + offsets)[list(valid_offset_indices),:]
+        margin=1.75
+        valid_offset_indices = (np.abs(roc) >= 1.75*thicknesses.value).nonzero()[0]
+        offset_pts=( pts + offsets.value)[list(valid_offset_indices),:]
         # offset_pts = ( pts + offsets)
-
+        
         if return_indices:
             return pts,offset_pts,valid_offset_indices
         else:
@@ -1129,7 +1149,7 @@ class Blade(Wing):
         return xs_surf_geometry
     
 
-    def _mesh_curve_and_offset(self,pts,offset_pts,name='blade_xs',plot=False,meshsize=1,num_boundary_comp=1):
+    def _mesh_curve_and_offset(self,pts,offset_pts,edge_pts=None,name='blade_xs',plot=False,meshsize=1,num_boundary_comp=1):
         ''' returns a mesh of a thickened curve in the plane'''
         gmsh.initialize()
         #initaite list of points
@@ -1140,6 +1160,11 @@ class Blade(Wing):
             pts_list.append(gmsh.model.occ.add_point(pt[0],pt[1],pt[2]))
         for offset_pt in offset_pts.value:
             pts_offset_list.append(gmsh.model.occ.add_point(offset_pt[0],offset_pt[1],offset_pt[2]))
+        if edge_pts is not None:
+            edge_pts_list = []
+            for edge_pt in edge_pts.value:
+                edge_pts_list.append(gmsh.model.occ.add_point(edge_pt[0],edge_pt[1],edge_pt[2]))
+        
         #ensure that the pts and offset points make a fully enclosed loop
         if num_boundary_comp==1:
             spline = gmsh.model.occ.add_spline(pts_list)
@@ -1154,9 +1179,15 @@ class Blade(Wing):
             pts_offset_list[-1] = pts_offset_list[0]
             spline = gmsh.model.occ.add_spline(pts_list)
             spline_offset = gmsh.model.occ.add_spline(pts_offset_list)
-            line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
-            
-            CL1 = gmsh.model.occ.add_curve_loop([-line1,spline,line1,spline_offset])
+            if edge_pts is None:
+                line1 = gmsh.model.occ.add_line(pts_list[0],pts_offset_list[0])
+                CL1 = gmsh.model.occ.add_curve_loop([-line1,spline,line1,spline_offset])
+            else:
+                edge_pts_list[0]=pts_list[0]
+                edge_pts_list[-1]=pts_offset_list[0]
+                edge_spline = gmsh.model.occ.add_spline(edge_pts_list)
+                CL1 = gmsh.model.occ.add_curve_loop([-edge_spline,spline,edge_spline,spline_offset])
+
         else:
             raise ValueError('Number of boundary components greater than 2 not supported!')
         
@@ -1348,6 +1379,13 @@ def rotate_oblique(vec,axis=1):
     elif axis==2:
         adjustment=csdl.vstack([scale,scale,np.zeros(scale.shape)]).T() #zero out z axis
     return vec*adjustment
+
+#Set a consistent value for all spar surface curves:
+def set_axial_value(vec,val):
+    vec.set_value(np.vstack([vec[:,0].value,
+                                np.ones_like(vec[:,1].value)*val,
+                                vec[:,2].value]).T)
+    return
 
 #Set a consistent value for all spar surface curves:
 def set_axial_value(vec,val):
