@@ -332,7 +332,6 @@ class Blade(Wing):
         LE_base_coord = self.geometry.evaluate(self._LE_base_point).value
         LE_tip_coord = self.geometry.evaluate(self._LE_tip_point).value
         u_coords = self._get_parametric_spacing(top_geometry,LE_base_coord,LE_tip_coord,num_spanwise)
-        #TODO:insert the endpoint of the spar box into the u_coords
         u_coord_spar_termination=top_geometry.project(front_spar_geometry.evaluate([(front_spar_index, np.array([1.0,1.0]))]),direction=[1,0,1])[0][1][0][0]
         u_coords_insert=(u_coords>u_coord_spar_termination).nonzero()[0][0]
         u_coords_new = np.insert(u_coords,u_coords_insert,u_coord_spar_termination)
@@ -342,11 +341,13 @@ class Blade(Wing):
         #   then re-map back to physical space after computing the section meshes?
         #   Currently, this meshing only works if the rotor blade has it's beam axis directly along the y-axis
 
+
+        #TODO: add some logic to detect the termination of the spar and add cross-sections at the end and right after the end
         xs = []
         
-        # for i,u_coord in enumerate(u_coords):
-        start_xs = 7            
-        for i,u_coord in zip([i+start_xs for i in range(len(u_coords[start_xs:]))],u_coords[start_xs:]):            
+        # for i,u_coord in enumerate(u_coords_new):
+        start_xs = 8            
+        for i,u_coord in zip([i+start_xs for i in range(len(u_coords_new[start_xs:]))],u_coords_new[start_xs:]):            
             #NEED TO USE A CONSTANT AXIAL COORDINATE TO PREVENT MESHING ISSUES ASSOCIATED WITH FITTING PLANAR SURFACES
             parametric_top = [(top_index, np.array([u_coord,v_coord])) for v_coord in v_coords]
             axial_coord = np.average(self.geometry.evaluate(parametric_top).value[:,1])
@@ -401,12 +402,13 @@ class Blade(Wing):
                     #trim offset points before and after intersection:
                     top_pts_offset = top_pts_offset[(intersections[0][0]+1):,:]
                     bot_pts_offset = bot_pts_offset[:intersections[0][1],:]
-                    #update the valid offsets indices:
-                    valid_top_offset_pts_indices = valid_top_offset_pts_indices[(intersections[0][0]+1):]
                     #add intersection point to upper and lower skin (close loop)
                     top_pts_offset = csdl.concatenate([intersection_pt,top_pts_offset])
                     bot_pts_offset = csdl.concatenate([bot_pts_offset,intersection_pt])
-                    #update valid offsets:
+                    #update valid offsets indices:
+                    #remove trimmed indices
+                    valid_top_offset_pts_indices = valid_top_offset_pts_indices[(intersections[0][0]+1):]
+                    #adjust for the intersection point
                     valid_top_offset_pts_indices = np.insert(valid_top_offset_pts_indices, 0, -1, axis=0)
 
                 #leading edge case:
@@ -441,6 +443,14 @@ class Blade(Wing):
                 #add intersection points:
                 top_pts_offset = csdl.concatenate([te_intersection_pt,top_pts_offset,le_intersection_pt])
                 bot_pts_offset = csdl.concatenate([bot_pts_offset,te_intersection_pt])
+
+                #update valid offsets indices:
+                #remove trimmed indices
+                valid_top_offset_pts_indices = valid_top_offset_pts_indices[(te_intersection[0]+1):]
+                valid_bot_offset_pts_indices = valid_bot_offset_pts_indices[(le_intersection[1]+1):]
+                #adjust for the intersection point
+                valid_top_offset_pts_indices = np.insert(valid_top_offset_pts_indices, 0, -1, axis=0)
+                valid_bot_offset_pts_indices = np.insert(valid_bot_offset_pts_indices, 0, -1, axis=0)
             else:
                 raise ValueError("Incorrect number of intersections detected")
 
@@ -470,18 +480,20 @@ class Blade(Wing):
             #generate a linearly spaced set of points from the trailing edge point to the intersection point
             #project these points to the upper and lower skins, then pointwise average their locations
             num_te_pts = 10
-            te_line_x = np.linspace(skin_pts[1].value[0],skin_offset_pts[1].value[0],num_te_pts)
+            te_line_x = np.linspace(skin_pts[0].value[0],skin_offset_pts[0].value[0],num_te_pts)
             te_line_y = axial_coord*np.ones_like(te_line_x)
-            te_line_z = np.linspace(skin_pts[1].value[2],skin_offset_pts[1].value[2],num_te_pts)
+            te_line_z = np.linspace(skin_pts[0].value[2],skin_offset_pts[0].value[2],num_te_pts)
             te_line_pts = np.vstack([te_line_x,te_line_y,te_line_z]).T
-
-            te_spline_top = top_geometry.evaluate(top_geometry.project(te_line_pts))
-            te_spline_bottom = bottom_geometry.evaluate(bottom_geometry.project(te_line_pts))
+            
+            te_line_unit_dir=(skin_offset_pts[0]-skin_pts[0])/csdl.norm(skin_pts[0]-skin_offset_pts[0])
+            te_line_perpendicular= te_line_perpendicular=np.array([-te_line_unit_dir.value[2],0,te_line_unit_dir.value[0]])
+            te_spline_top = top_geometry.evaluate(top_geometry.project(te_line_pts,direction=te_line_perpendicular))
+            te_spline_bottom = bottom_geometry.evaluate(bottom_geometry.project(te_line_pts,direction=te_line_perpendicular))
 
             te_spline_pts= csdl.Variable(value=np.mean([te_spline_top.value,te_spline_bottom.value],axis=0))
-            te_spline_pts = csdl.concatenate([skin_pts[0:1],
-                                              te_spline_pts,
-                                              skin_offset_pts[0:1]])
+            # te_spline_pts = csdl.concatenate([skin_pts[0:1],
+            #                                   te_spline_pts,
+            #                                   skin_offset_pts[0:1]])
             set_axial_value(skin_pts,axial_coord)
             set_axial_value(skin_offset_pts,axial_coord)
             set_axial_value(te_spline_pts,axial_coord)
@@ -503,7 +515,25 @@ class Blade(Wing):
             #                           component=skin_surf_geometry,
             #                           plot=True)
             
+            #========= SPAR BOX TERMINATION CHECK/ENTIRE FILL ==========#
             #CHECK IF THE SPANWISE COORDINATE IS BEFORE OR AFTER THE SPAR TERMINATION:
+            if u_coord>u_coord_spar_termination:
+                #if we are past the spar box, mesh a solid foam interior and continue to the next cross-section
+                # rear_skin_offset_upper_segment = csdl.concatenate([skin_offset_pts[:skin_indices_rear[0]],
+                #                                                 top_intersection_pt_rear])
+                # rear_skin_offset_lower_segment = csdl.concatenate([bot_intersection_pt_rear,
+                #                                                 skin_offset_pts[skin_indices_rear[1]+1:]])
+                # set_axial_value(rear_skin_offset_upper_segment,axial_coord) #ensure all axial coordinates match
+                # set_axial_value(rear_skin_offset_lower_segment,axial_coord) #ensure all axial coordinates match
+
+                full_fill_surf_name = 'full_fill_'+str(i)
+                full_fill_surf_name = self._mesh_curve_loop([top_pts_offset,
+                                                        bot_pts_offset],
+                                                        name=full_fill_surf_name,
+                                                        plot=False,
+                                                        meshsize=10*approx_mesh_size_skin)
+                continue
+            
             front_spar_end=front_spar_geometry.evaluate([(front_spar_index, np.array([1.0,1.0]))])
             if front_spar_end.value[1]>=axial_coord:
                 print('still got it :)')
