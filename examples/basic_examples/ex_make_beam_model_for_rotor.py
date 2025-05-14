@@ -105,7 +105,7 @@ spar_indices = [list(spar.function_names.keys())[0] for spar in [front_spar_geom
 pusher_prop_spar_geometry = pusher_prop_blade.create_subgeometry(search_names=[str(idx) for idx in spar_indices])
 
 #view the blade with the new spar surfaces
-pusher_prop_blade.geometry.plot(opacity=0.5)
+# pusher_prop_blade.geometry.plot(opacity=0.5)
 
 #MATERIALS
 #Aluminum
@@ -215,23 +215,30 @@ aluminum_albatross = ALBATROSS.material.caddee_material_to_albatross(aluminum)
 
 path = os.getcwd()
 
-filenames=['front_spar_0.msh',
-           'rear_spar_0.msh',
-           'top_spar_0.msh',
-           'bot_spar_0.msh']
-
-filePath=os.path.join(path,fileName)
-
+filenames=['front_spar_0',
+           'rear_spar_0',
+           'top_spar_0',
+           'bot_spar_0']
 meshes = []
-with XDMFFile(MPI.COMM_WORLD, filePath, "r") as xdmf:
-    #mesh generation with meshio seems to have difficulty renaming the mesh name
-    # (but not the file, hence the "Grid" name property)
-    domain = xdmf.read_mesh(name="Grid")
-    meshes.append(domain)
+for filename in filenames:
+
+    filePath_msh=os.path.join(path,'stored_files',filename+'.msh')
+    msh = meshio.read(filePath_msh)
+    filePath_xdmf=os.path.join(path,'stored_files',filename+'.xdmf')
+    meshio.write(filePath_xdmf,msh)
+    # xdmf_from_gmsh = ALBATROSS.utils.gmsh_to_xdmf(msh,'triangle')
+
+    with XDMFFile(MPI.COMM_WORLD, filePath_xdmf, "r") as xdmf:
+        #mesh generation with meshio seems to have difficulty renaming the mesh name
+        # (but not the file, hence the "Grid" name property)
+        domain = xdmf.read_mesh(name="Grid")
+        meshes.append(domain)
 
 XSs = [ALBATROSS.cross_section.CrossSection(msh,[aluminum_albatross]) for msh in meshes]
 
 spar_box_xs = ALBATROSS.cross_section.CoupledXSProblem(XSs,pen=1e4)
+
+spar_box_xs.plot_meshes()
 
 
 

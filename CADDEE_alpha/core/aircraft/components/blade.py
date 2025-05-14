@@ -1241,6 +1241,8 @@ class Blade(Wing):
         gmsh.write(filename)
         filename2 = "stored_files/"+ name + '.vtk'
         gmsh.write(filename2)
+        # filename3 = "stored_files/"+ name + '.xdmf'
+        # gmsh.write(filename3)
         gmsh.finalize()
 
         return  filename
@@ -1299,6 +1301,8 @@ class Blade(Wing):
         gmsh.write(filename)
         filename2 = "stored_files/"+ name + '.vtk'
         gmsh.write(filename2)
+        # filename3 = "stored_files/"+ name + '.xdmf'
+        # gmsh.write(filename3)
         gmsh.finalize()
 
         return  filename
