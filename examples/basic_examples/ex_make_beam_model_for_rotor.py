@@ -210,12 +210,12 @@ else:
 #     # pusher_prop_blade_xs_ts.plot(additional_plotting_elements=[xs_bs_plot],opacity=0.5)
 # pusher_prop_blade.geometry.plot(opacity=0.5)
 
-# ================== LIFT ROTORS =========================== #
 aluminum_albatross = ALBATROSS.material.caddee_material_to_albatross(aluminum)
 
 path = os.getcwd()
 
 filenames=['front_spar_0',
+        #    'skin_0',
            'rear_spar_0',
            'top_spar_0',
            'bot_spar_0']
@@ -224,8 +224,9 @@ for filename in filenames:
 
     filePath_msh=os.path.join(path,'stored_files',filename+'.msh')
     msh = meshio.read(filePath_msh)
+    out_mesh= meshio.Mesh(points=msh.points[:,(0,2)], cells={'triangle': msh.get_cells_type('triangle')}, cell_data={"name_to_read":[msh.get_cell_data("gmsh:geometrical", 'triangle')]})
     filePath_xdmf=os.path.join(path,'stored_files',filename+'.xdmf')
-    meshio.write(filePath_xdmf,msh)
+    meshio.write(filePath_xdmf,out_mesh)
     # xdmf_from_gmsh = ALBATROSS.utils.gmsh_to_xdmf(msh,'triangle')
 
     with XDMFFile(MPI.COMM_WORLD, filePath_xdmf, "r") as xdmf:
@@ -240,9 +241,15 @@ spar_box_xs = ALBATROSS.cross_section.CoupledXSProblem(XSs,pen=1e4)
 
 spar_box_xs.plot_meshes()
 
+spar_box_xs.get_xs_stiffness_matrix(correction=None)
 
+spar_box_xs.plot_warping_fxns()
+from dolfinx import mesh
+top_mesh = XSs[3].msh
+top_mesh.topology.create_connectivity(top_mesh.topology.dim - 1, top_mesh.topology.dim)
+exterior_facets_top_mesh=mesh.exterior_facet_indices(top_mesh.topology)
 
-# Lift rotors
+# ================== LIFT ROTORS =========================== #
 lift_rotors = []
 for i in range(8):
     rotor_geometry = aircraft.create_subgeometry(search_names=[
